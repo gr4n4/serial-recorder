@@ -83,6 +83,7 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request, send_file
 
 from client.image import render_risk_image
+from server import nrcarec_alert
 from server.alert import fire_alert
 from server.client_names import ClientNameStore
 from server.config_store import ConfigStore
@@ -193,6 +194,9 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
     connection_monitor = ConnectionMonitor(registry, timeout_s=client_timeout_s)
     connection_monitor.start()
     name_store = ClientNameStore(warning_dir)
+    # 경고를 NRCarec(간호 기록 앱) 으로도 올린다. NRCAREC_SERVICE_ACCOUNT
+    # 가 비어 있으면 아무것도 하지 않으므로, 안 쓰는 설치에는 영향이 없다.
+    nrcarec_alert.configure(registry, name_store)
 
     def _client_id():
         client_id = request.args.get("client_id")
@@ -318,6 +322,11 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
             f"압력 위험 경고({client_id}): {len(risky_idx)}개 셀이 critical_time을 초과했습니다."
         )
         warning_store.log_event(data, record["received_at"])
+        # 디스크에 적은 **뒤에** 올린다. 이 순서라야 인터넷이 끊겨도 로컬
+        # 기록은 남는다. (올리는 쪽은 예외를 내지 않고 바로 돌아온다.)
+        nrcarec_alert.notify_event(
+            client_id, name_store.get(client_id), state.get_config(), data
+        )
         return record["received_at"]
 
     @app.post("/event")
@@ -449,6 +458,9 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
         app.logger.info(
             "IMAGE client=%s received (%d bytes) -> %s", client_id, len(image_bytes), saved_path
         )
+        # 방금 올린 경고에 이 그림을 붙인다. 올린 경고가 없으면(재전송 간격에
+        # 걸려 안 올렸으면) 조용히 버린다.
+        nrcarec_alert.notify_image(client_id, image_bytes)
         latest_state = state.get_latest_state()
         if latest_state and latest_state.get("pressure"):
             config = state.get_config()

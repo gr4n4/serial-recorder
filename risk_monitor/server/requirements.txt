@@ -1,3 +1,6 @@
 flask
 numpy
 Pillow
+# NRCarec(간호 기록 앱) 으로 경고를 올릴 때만 쓴다.
+# NRCAREC_SERVICE_ACCOUNT 가 비어 있으면 불러오지도 않는다.
+firebase-admin
