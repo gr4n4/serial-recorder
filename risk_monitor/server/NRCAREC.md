@@ -66,8 +66,12 @@ setx NRCAREC_SERVICE_ACCOUNT "%USERPROFILE%\.nrcarec\nrcarec-key.json"
 
 ```powershell
 $env:NRCAREC_DRY_RUN = "1"
-python -m server.app
+py -3.14 -m server.app
 ```
+
+> `python` 이 아니라 **`py -3.14`** 다. 이 PC 에는 파이썬이 두 개 깔려 있고,
+> `python` 은 아무것도 안 깔린 3.13 을 가리켜 `ModuleNotFoundError: No module
+> named 'flask'` 가 난다. `py --list` 로 어느 쪽이 기본인지 볼 수 있다.
 
 이 상태로 대시보드에서 **모의 경고**를 누르면 `app.log` 에 이렇게 뜬다.
 
