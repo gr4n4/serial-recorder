@@ -30,14 +30,31 @@ Firebase 콘솔 → 프로젝트 설정 → 서비스 계정 → **새 비공개
 
 받은 파일을 저장소 밖에 두고 경로만 넘긴다.
 
+**PowerShell**
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.nrcarec"
+Move-Item "$env:USERPROFILE\Downloads\*firebase-adminsdk*.json" "$env:USERPROFILE\.nrcarec\nrcarec-key.json"
+setx NRCAREC_SERVICE_ACCOUNT "$env:USERPROFILE\.nrcarec\nrcarec-key.json"
+```
+
+**명령 프롬프트(cmd)**
+
 ```bat
 mkdir "%USERPROFILE%\.nrcarec"
 move "%USERPROFILE%\Downloads\*firebase-adminsdk*.json" "%USERPROFILE%\.nrcarec\nrcarec-key.json"
 setx NRCAREC_SERVICE_ACCOUNT "%USERPROFILE%\.nrcarec\nrcarec-key.json"
 ```
 
-> `setx` 는 **다음에 새로 여는 창부터** 적용된다. 지금 열려 있는 창에서
-> 바로 쓰려면 `set NRCAREC_SERVICE_ACCOUNT=...` 를 한 번 더 친다.
+> **둘을 섞지 말 것.** `%USERPROFILE%` 는 cmd 문법이라 PowerShell 에서는
+> 글자 그대로 저장된다(`setx` 는 저장할 때 풀어 주지 않는다). 그러면 경로를
+> 못 찾아 연동이 조용히 꺼진다. PowerShell 에서는 `$env:USERPROFILE` 를 쓴다.
+>
+> `setx` 는 **다음에 새로 여는 창부터** 적용된다. 지금 창에서 바로 쓰려면
+> PowerShell 은 `$env:NRCAREC_SERVICE_ACCOUNT = "..."`, cmd 는
+> `set NRCAREC_SERVICE_ACCOUNT=...` 를 한 번 더 친다.
+>
+> 잘 들어갔는지는 **새 창**에서 확인한다 — PowerShell `echo $env:NRCAREC_SERVICE_ACCOUNT`.
 
 환경변수를 **비워 두면 이 기능 전체가 꺼진다.** 그때는 지금까지와 똑같이
 로컬에만 기록한다. 안 쓰는 설치에는 아무 영향이 없다.
@@ -47,8 +64,8 @@ setx NRCAREC_SERVICE_ACCOUNT "%USERPROFILE%\.nrcarec\nrcarec-key.json"
 설치가 맞는지 보려고 진짜 경고를 쏘면 **등록된 간호사 폰이 전부 울린다.**
 한밤중에 설정을 손볼 수도 있으니, 확인과 발송을 갈라 두었다.
 
-```bat
-set NRCAREC_DRY_RUN=1
+```powershell
+$env:NRCAREC_DRY_RUN = "1"
 python -m server.app
 ```
 
@@ -67,10 +84,10 @@ python -m server.app
 대시보드에서 `421호 김복순` 으로 바꾸면 그대로 나온다 — 환자가 누구인지는
 이쪽이 모르므로 지어 준 이름을 그대로 쓴다.
 
-확인이 끝나면 연습 모드를 끈다.
+확인이 끝나면 연습 모드를 끈다. 창을 닫았다 새로 열어도 된다.
 
-```bat
-set NRCAREC_DRY_RUN=
+```powershell
+Remove-Item Env:\NRCAREC_DRY_RUN
 ```
 
 ## 보내는 주기가 로컬과 다르다
