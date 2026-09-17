@@ -36,6 +36,14 @@ logger = logging.getLogger(__name__)
 # 서비스 계정 JSON 경로. 없으면 이 모듈 전체가 잠잠해진다.
 ENV_KEY = "NRCAREC_SERVICE_ACCOUNT"
 
+# 연습 모드. 키가 맞는지, 무슨 문구가 갈지만 로그로 보여 주고 실제로는
+# 아무것도 쓰지 않는다.
+#
+# 이게 없으면 설치를 확인할 방법이 "진짜로 한 번 쏴 보기"뿐인데, 그러면
+# 등록된 간호사 폰이 전부 울린다. 한밤중에 설정을 손볼 수도 있는 노릇이라
+# 확인과 발송을 갈라 둔다.
+ENV_DRY_RUN = "NRCAREC_DRY_RUN"
+
 # NRCarec 으로 같은 센서의 경고를 다시 올리기까지 기다리는 시간(초).
 DEFAULT_COOLDOWN_S = 900.0
 
@@ -75,6 +83,12 @@ class _Sender:
     @property
     def enabled(self):
         return bool(os.environ.get(ENV_KEY, "").strip())
+
+    @property
+    def dry_run(self):
+        return os.environ.get(ENV_DRY_RUN, "").strip().lower() in (
+            "1", "true", "yes", "y", "on"
+        )
 
     def configure(self, registry, name_store):
         """app.py 가 만든 것들을 빌려 둔다. 설정 거울을 쓸 때 필요하다."""
@@ -186,6 +200,18 @@ class _Sender:
         body = f"{who} · {p['cells']}개 셀이 {mins_text}을 넘겼습니다."
 
         doc_id = f"{KIND}_{_safe(client_id)}_{int(now)}"
+
+        if self.dry_run:
+            # 여기까지 왔으면 키도 맞고 설정도 켜져 있다는 뜻이다.
+            # 실제로 쓰지 않으므로 간호사 폰은 울리지 않는다.
+            logger.info(
+                "[NRCarec] 연습 모드 — 보내지 않음. 실제로는 이렇게 갔을 것:\n"
+                "          문서 %s\n          본문 %s", doc_id, body,
+            )
+            with self._lock:
+                self._last_sent[client_id] = now
+            return
+
         db.collection("notification_log").document(doc_id).set({
             "sentAt": self._firestore.SERVER_TIMESTAMP,
             "kind": KIND,
@@ -292,7 +318,9 @@ class _Sender:
         바꾸는 곳은 여전히 압력 대시보드다. 원본을 둘로 만들면 어느 쪽이
         맞는지 정할 수 없어진다. 다만 간호사가 '지금 몇으로 돼 있나'를
         NRCarec 한 곳에서 볼 수 있어야 해서, 값만 흘려 보낸다."""
-        if self._registry is None:
+        # 연습 모드에서는 아무것도 쓰지 않는다. 확인하러 켰는데 뭔가 남으면
+        # 그것대로 헷갈린다.
+        if self._registry is None or self.dry_run:
             return
 
         sensors = []

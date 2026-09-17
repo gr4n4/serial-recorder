@@ -25,6 +25,14 @@ dist/
 .env
 CLAUDE.md
 
+# Firebase 서비스 계정 키. 이 파일 하나면 우리 Firestore 를 통째로 읽고 쓸
+# 수 있다. 파일은 저장소 밖에 두고 경로만 NRCAREC_SERVICE_ACCOUNT 로 넘긴다.
+# 실수로 폴더에 떨어뜨렸을 때를 대비해 여기서도 막아 둔다.
+*firebase-adminsdk*.json
+*serviceaccount*.json
+*service-account*.json
+nrcarec-key.json
+
 # IDE / OS
 .vscode/
 .idea/

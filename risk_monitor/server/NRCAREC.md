@@ -28,12 +28,50 @@ Firebase 콘솔 → 프로젝트 설정 → 서비스 계정 → **새 비공개
 
 > **비공개 키다. 저장소에 커밋하지 말 것.** 경로만 환경변수로 넣는다.
 
+받은 파일을 저장소 밖에 두고 경로만 넘긴다.
+
 ```bat
-setx NRCAREC_SERVICE_ACCOUNT "%USERPROFILE%\pressure-server\nrcarec-key.json"
+mkdir "%USERPROFILE%\.nrcarec"
+move "%USERPROFILE%\Downloads\*firebase-adminsdk*.json" "%USERPROFILE%\.nrcarec\nrcarec-key.json"
+setx NRCAREC_SERVICE_ACCOUNT "%USERPROFILE%\.nrcarec\nrcarec-key.json"
 ```
+
+> `setx` 는 **다음에 새로 여는 창부터** 적용된다. 지금 열려 있는 창에서
+> 바로 쓰려면 `set NRCAREC_SERVICE_ACCOUNT=...` 를 한 번 더 친다.
 
 환경변수를 **비워 두면 이 기능 전체가 꺼진다.** 그때는 지금까지와 똑같이
 로컬에만 기록한다. 안 쓰는 설치에는 아무 영향이 없다.
+
+## 먼저 연습 모드로 확인한다
+
+설치가 맞는지 보려고 진짜 경고를 쏘면 **등록된 간호사 폰이 전부 울린다.**
+한밤중에 설정을 손볼 수도 있으니, 확인과 발송을 갈라 두었다.
+
+```bat
+set NRCAREC_DRY_RUN=1
+python -m server.app
+```
+
+이 상태로 대시보드에서 **모의 경고**를 누르면 `app.log` 에 이렇게 뜬다.
+
+```
+[NRCarec] 연습 모드 — 보내지 않음. 실제로는 이렇게 갔을 것:
+          문서 pressure_pi-421_1789606694
+          본문 421호 김복순 · 105개 셀이 90분을 넘겼습니다.
+```
+
+여기까지 왔으면 키도 맞고 알림 설정도 켜져 있다는 뜻이다. Firestore 에는
+아무것도 쓰지 않았고 폰도 울리지 않았다.
+
+본문 앞이 `pi-421` 처럼 나오면 그 센서에 **이름표를 아직 안 지은 것**이다.
+대시보드에서 `421호 김복순` 으로 바꾸면 그대로 나온다 — 환자가 누구인지는
+이쪽이 모르므로 지어 준 이름을 그대로 쓴다.
+
+확인이 끝나면 연습 모드를 끈다.
+
+```bat
+set NRCAREC_DRY_RUN=
+```
 
 ## 보내는 주기가 로컬과 다르다
 
@@ -85,13 +123,20 @@ NRCarec 앱의 **알림 설정 → 센서 경보 → 욕창 위험**. 꺼 두면
 보내지 않는다(`settings/notifications` 의 `sensorAlerts.pressure`).
 설정을 못 읽으면 보내는 쪽으로 판단한다 — 못 가는 편이 더 나쁘다.
 
-## 확인 방법
+## 진짜로 보내기
 
-서버를 띄우고 대시보드에서 **모의 경고**를 누른다.
+연습 모드를 끄고 같은 절차를 되풀이한다. 이번에는 이렇게 뜬다.
 
 ```
-[NRCarec] 경고 보냄 client=pi-a cells=105 doc=pressure_pi-a_1789462220
+[NRCarec] 경고 보냄 client=pi-421 cells=105 doc=pressure_pi-421_1789606694
 ```
 
-이 줄이 `app.log` 에 뜨면 올라간 것이다. NRCarec 알림 기록에도 같은 건이
-보인다. 안 뜨면 같은 파일에서 `[NRCarec]` 로 시작하는 실패 줄을 찾는다.
+NRCarec 알림 기록에도 같은 건이 보이고, 등록된 기기로 푸시가 간다.
+안 뜨면 같은 파일에서 `[NRCarec]` 로 시작하는 실패 줄을 찾는다.
+
+| 로그 | 뜻 |
+|---|---|
+| `NRCarec 연동 꺼짐 (...가 비어 있음)` | 환경변수가 안 잡혔다. 창을 새로 열었는지 확인 |
+| `알림 설정 읽기 실패, 보내기로 함` | Firestore 에 못 닿았다. 그래도 경보는 보낸다 |
+| `보낼 것이 밀려 한 건 버림` | 네트워크가 오래 막혀 큐가 찼다 |
+| 아무 줄도 없음 | 재전송 간격(15분)에 걸렸거나 앱에서 욕창 알림을 꺼 두었다 |
