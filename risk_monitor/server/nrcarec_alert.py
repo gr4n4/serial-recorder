@@ -129,13 +129,29 @@ class _Sender:
     # ---------- app.py 가 부르는 곳 ----------
 
     def notify_event(self, client_id, display_name, config, data):
-        """위험 경고 한 건. 절대 예외를 내지 않고 즉시 돌아온다."""
+        """위험 경고 한 건. 절대 예외를 내지 않고 즉시 돌아온다.
+
+        문서 ID 와 재전송 간격 판단을 **여기서** 끝낸다. 작업 스레드에 미뤄
+        두면 뒤따라오는 스냅샷이 붙을 곳을 못 찾는다 — notify_image 는
+        요청 스레드에서 바로 호출되는데, 그때까지 작업 스레드가 이 건을
+        처리했으리라는 보장이 없다. 모의 경고는 사이에 네트워크가 없어서
+        거의 매번 진다. 판단 자체는 딕셔너리 조회라 요청을 붙잡지 않는다."""
         if not self.enabled:
             return
         try:
             self._ensure_worker()
+
+            now = time.time()
+            with self._lock:
+                if now - self._last_sent.get(client_id, 0.0) < _cooldown():
+                    return
+                doc_id = f"{KIND}_{_safe(client_id)}_{int(now)}"
+                self._last_sent[client_id] = now
+                self._recent[client_id] = (doc_id, now)
+
             risky = data.get("risky_idx") or []
             self._put(("event", {
+                "doc_id": doc_id,
                 "client_id": client_id,
                 "display_name": (display_name or client_id or "").strip(),
                 "cells": len(risky),
@@ -152,8 +168,15 @@ class _Sender:
         try:
             with self._lock:
                 recent = self._recent.get(client_id)
-            if not recent or (time.time() - recent[1]) > IMAGE_WINDOW_S:
-                return
+                if not recent or (time.time() - recent[1]) > IMAGE_WINDOW_S:
+                    return
+                # 한 경보에 한 장만. 꺼내면서 지운다.
+                #
+                # 재전송 간격에 막혀 안 올린 경고에도 그림은 계속 따라온다.
+                # 지우지 않으면 그 그림이 직전 경보 문서를 덮어써서, 15분 전
+                # 경보에 방금 찍힌 그림이 붙는다. 보는 사람은 그 그림을 보고
+                # 판단하므로 어긋나면 안 된다.
+                del self._recent[client_id]
             self._put(("image", {"doc_id": recent[0], "png": image_bytes}))
         except Exception as e:
             logger.warning("[NRCarec] 스냅샷 담기 실패: %s", e)
@@ -182,24 +205,24 @@ class _Sender:
                 self._q.task_done()
 
     def _send_event(self, p):
+        """재전송 간격과 문서 ID 는 notify_event 에서 이미 정해져 왔다.
+        여기서는 Firestore 를 타는 일만 한다."""
         client_id = p["client_id"]
-
-        now = time.time()
-        with self._lock:
-            last = self._last_sent.get(client_id, 0.0)
-        if now - last < _cooldown():
-            return
+        doc_id = p["doc_id"]
 
         db = self._db()
         if not self._wanted(db):
+            # 앱에서 꺼 둔 알림이다. 자리를 잡아 둔 것을 되돌려, 다시 켰을 때
+            # 15분을 기다리지 않게 하고 뒤따라올 스냅샷도 버리게 한다.
+            with self._lock:
+                self._last_sent.pop(client_id, None)
+                self._recent.pop(client_id, None)
             return
 
         who = p["display_name"] or client_id
         mins = p["critical_time"]
         mins_text = f"{int(mins)}분" if isinstance(mins, (int, float)) else "기준 시간"
         body = f"{who} · {p['cells']}개 셀이 {mins_text}을 넘겼습니다."
-
-        doc_id = f"{KIND}_{_safe(client_id)}_{int(now)}"
 
         if self.dry_run:
             # 여기까지 왔으면 키도 맞고 설정도 켜져 있다는 뜻이다.
@@ -208,8 +231,6 @@ class _Sender:
                 "[NRCarec] 연습 모드 — 보내지 않음. 실제로는 이렇게 갔을 것:\n"
                 "          문서 %s\n          본문 %s", doc_id, body,
             )
-            with self._lock:
-                self._last_sent[client_id] = now
             return
 
         db.collection("notification_log").document(doc_id).set({
@@ -226,10 +247,6 @@ class _Sender:
             "accumulatedTime": p.get("accumulated_time"),
         })
 
-        with self._lock:
-            self._last_sent[client_id] = now
-            self._recent[client_id] = (doc_id, now)
-
         self._push(db, doc_id, body)
         self._write_mirror(db, force=True)
         logger.info("[NRCarec] 경고 보냄 client=%s cells=%d doc=%s",
@@ -242,6 +259,13 @@ class _Sender:
         그림을 넣으면 목록을 열 때마다 100건어치 그림을 같이 받는다.
         따로 두면 간호사가 눌러 볼 때만 3KB 가 오간다."""
         png = p["png"]
+        if self.dry_run:
+            logger.info(
+                "[NRCarec] 연습 모드 — 스냅샷도 보내지 않음 (%s, %d바이트 → "
+                "base64 %d바이트)",
+                p["doc_id"], len(png), len(base64.b64encode(png)),
+            )
+            return
         db = self._db()
         db.collection("pressure_snapshots").document(p["doc_id"]).set({
             "png": base64.b64encode(png).decode("ascii"),

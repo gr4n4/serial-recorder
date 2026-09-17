@@ -385,6 +385,10 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
         )
         image_bytes = render_risk_image(pressure, mock["rows"], mock["cols"], risky_idx)
         entry["warning_store"].save_image(image_bytes, received_at, is_mock=True)
+        # 모의 경고는 POST /image 를 거치지 않는다. 여기서 직접 붙여 주지
+        # 않으면 "모의 경고로 확인한다"는 절차가 정작 스냅샷만 빼고 확인하는
+        # 셈이 된다.
+        nrcarec_alert.notify_image(client_id, image_bytes)
         entry["warning_store"].save_status(
             pressure, mock["cols"], mock["rows"], received_at, is_mock=True
         )
