@@ -44,6 +44,13 @@ ENV_KEY = "NRCAREC_SERVICE_ACCOUNT"
 # 확인과 발송을 갈라 둔다.
 ENV_DRY_RUN = "NRCAREC_DRY_RUN"
 
+# 푸시만 뺀다. Firestore 에는 진짜로 올려서 스테이션 화면과 알림 기록에
+# 실제로 뜨는 것을 보되, 등록된 간호사 폰은 울리지 않는다.
+#
+# 연습 모드는 아무것도 쓰지 않아서 '어떻게 보이는지'는 확인할 수 없다.
+# 병동에 설치하기 전에 화면을 눈으로 보려면 이 모드가 필요하다.
+ENV_NO_PUSH = "NRCAREC_NO_PUSH"
+
 # NRCarec 으로 같은 센서의 경고를 다시 올리기까지 기다리는 시간(초).
 DEFAULT_COOLDOWN_S = 900.0
 
@@ -86,9 +93,11 @@ class _Sender:
 
     @property
     def dry_run(self):
-        return os.environ.get(ENV_DRY_RUN, "").strip().lower() in (
-            "1", "true", "yes", "y", "on"
-        )
+        return _flag(ENV_DRY_RUN)
+
+    @property
+    def no_push(self):
+        return _flag(ENV_NO_PUSH)
 
     def configure(self, registry, name_store):
         """app.py 가 만든 것들을 빌려 둔다. 설정 거울을 쓸 때 필요하다."""
@@ -128,7 +137,8 @@ class _Sender:
 
     # ---------- app.py 가 부르는 곳 ----------
 
-    def notify_event(self, client_id, display_name, config, data):
+    def notify_event(self, client_id, display_name, config, data,
+                     received_at=None):
         """위험 경고 한 건. 절대 예외를 내지 않고 즉시 돌아온다.
 
         문서 ID 와 재전송 간격 판단을 **여기서** 끝낸다. 작업 스레드에 미뤄
@@ -152,6 +162,9 @@ class _Sender:
             risky = data.get("risky_idx") or []
             self._put(("event", {
                 "doc_id": doc_id,
+                # 이 경고가 warnings.log 에서 어느 줄인지. 간호사가 NRCarec 에
+                # 부위를 적으면 이 값으로 로컬 기록의 같은 건을 찾아 붙인다.
+                "received_at": received_at,
                 "client_id": client_id,
                 "display_name": (display_name or client_id or "").strip(),
                 "cells": len(risky),
@@ -245,6 +258,9 @@ class _Sender:
             "deviceId": client_id,
             "cellCount": p["cells"],
             "accumulatedTime": p.get("accumulated_time"),
+            # 로컬 warnings.log 의 같은 건을 가리키는 값. 부위를 되돌려 적을
+            # 때 쓴다(warning_store.annotate_site).
+            "receivedAt": p.get("received_at"),
         })
 
         self._push(db, doc_id, body)
@@ -291,6 +307,11 @@ class _Sender:
     # ---------- 푸시 ----------
 
     def _push(self, db, doc_id, body):
+        if self.no_push:
+            logger.info("[NRCarec] 푸시 건너뜀 (%s=1). 화면에는 뜬다.",
+                        ENV_NO_PUSH)
+            return
+
         from firebase_admin import messaging
 
         tokens = [d.id for d in db.collection("push_tokens").stream()]
@@ -380,6 +401,12 @@ class _Sender:
             "sensors": sensors,
         })
         self._mirror_sig = sig
+
+
+def _flag(name):
+    return os.environ.get(name, "").strip().lower() in (
+        "1", "true", "yes", "y", "on"
+    )
 
 
 def _cooldown():

@@ -325,7 +325,8 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
         # 디스크에 적은 **뒤에** 올린다. 이 순서라야 인터넷이 끊겨도 로컬
         # 기록은 남는다. (올리는 쪽은 예외를 내지 않고 바로 돌아온다.)
         nrcarec_alert.notify_event(
-            client_id, name_store.get(client_id), state.get_config(), data
+            client_id, name_store.get(client_id), state.get_config(), data,
+            record["received_at"],
         )
         return record["received_at"]
 
