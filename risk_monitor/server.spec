@@ -22,6 +22,13 @@ a = Analysis(
     hiddenimports=[
         "server.app", "server.alert", "server.connection_monitor",
         "server.grid", "server.state", "server.warning_store",
+        # NRCarec 연동. firebase_admin 은 함수 안에서 늦게 부르고(안 깔려
+        # 있어도 서버는 떠야 하므로) grpc 를 동적으로 불러오는 꾸러미라,
+        # PyInstaller 가 놓치기 쉽다. 놓치면 exe 는 멀쩡히 만들어지는데
+        # 정작 경보를 보낼 때 죽는다 - 병동에 나간 뒤에야 드러난다.
+        "server.nrcarec_alert", "firebase_admin", "firebase_admin.messaging",
+        "firebase_admin.credentials", "firebase_admin.firestore",
+        "google.cloud.firestore",
     ],
     hookspath=[],
     hooksconfig={},
