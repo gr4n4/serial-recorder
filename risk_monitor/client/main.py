@@ -344,8 +344,44 @@ class ClientApp:
             print("[client] stopped", flush=True)
 
 
+# 라즈베리파이 OS 를 갓 설치했을 때의 호스트네임.
+# SD 카드를 복제해 여러 대를 만들면 전부 이 이름이 된다.
+STOCK_HOSTNAMES = {"raspberrypi", "raspberry", "localhost"}
+
+
+def resolve_client_id(args):
+    """서버에 자기를 뭐라고 알릴지 정한다.
+
+    client_id 가 겹치면 서버는 그 둘을 **같은 기기 하나**로 본다. 침대마다
+    라즈베리파이를 두는데 SD 카드를 복제해 만들면 전부 'raspberrypi' 가
+    되어, 침대 네 개가 조용히 감시에서 빠진다. 대시보드에는 한 대가 멀쩡히
+    붙어 있는 것으로 보이므로 알아채기도 어렵다.
+
+    그래서 갓 설치한 이름 그대로면 시작하지 않는다. 고치는 데 몇 초면 되는
+    일이고, 놓치면 보고 있어야 할 침대를 아무도 안 보게 된다."""
+    if args.client_id:
+        return args.client_id
+
+    hostname = socket.gethostname()
+    if hostname.strip().lower() in STOCK_HOSTNAMES:
+        raise SystemExit(
+            # 안내문에는 - 와 · 만 쓴다. em dash 같은 글자는 한국어 윈도우
+            # 콘솔(cp949)에서 인코딩에 걸려, 정작 읽어야 할 안내가 안 뜬다.
+            f"\n이 기기의 이름이 '{hostname}' 입니다. 라즈베리파이 기본값이라\n"
+            "그대로 두면 다른 기기와 겹칩니다. 겹치면 서버가 둘을 한 대로 묶어서,\n"
+            "침대 하나가 감시에서 조용히 빠집니다.\n"
+            "\n"
+            "둘 중 하나로 이름을 정해 주세요.\n"
+            f"  이번만    : python -m client.main --client-id 421호 --port {args.port}\n"
+            "  기기 이름 : sudo hostnamectl set-hostname pi-421   (재부팅 뒤 적용)\n"
+        )
+    return hostname
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    # 시리얼 포트를 열기 전에 막는다. 한참 돌다가 죽으면 원인을 찾기 어렵다.
+    args.client_id = resolve_client_id(args)
     ClientApp(args).run()
 
 
