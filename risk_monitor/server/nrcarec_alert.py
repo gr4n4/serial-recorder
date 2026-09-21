@@ -77,6 +77,15 @@ class _Sender:
         self._started = False
         self._registry = None
         self._name_store = None
+        self._annotate = None
+        self._sites_watch = None
+
+        # (client_id, received_at) -> 문서 ID.
+        # 압력 대시보드에서 적은 부위를 NRCarec 으로 올릴 때, 그 경고가
+        # 어느 문서였는지 되찾는 데 쓴다. 서버를 껐다 켜면 비는데, 그때는
+        # 대시보드에서 적은 부위가 NRCarec 으로 안 올라간다. 반대 방향
+        # (NRCarec -> 로컬)은 문서를 되읽어 찾으므로 재시작과 무관하다.
+        self._doc_by_event = {}
 
         # client_id -> 마지막으로 NRCarec 에 올린 시각
         self._last_sent = {}
@@ -99,10 +108,15 @@ class _Sender:
     def no_push(self):
         return _flag(ENV_NO_PUSH)
 
-    def configure(self, registry, name_store):
-        """app.py 가 만든 것들을 빌려 둔다. 설정 거울을 쓸 때 필요하다."""
+    def configure(self, registry, name_store, annotate=None):
+        """app.py 가 만든 것들을 빌려 둔다.
+
+        annotate(client_id, received_at, site) 는 NRCarec 에서 적은 부위를
+        로컬 warnings.log 에 붙이는 함수다. 이쪽에서 WarningStore 를 직접
+        들추지 않으려고 함수만 받는다."""
         self._registry = registry
         self._name_store = name_store
+        self._annotate = annotate
         if self.enabled:
             self._ensure_worker()
         else:
@@ -118,6 +132,8 @@ class _Sender:
             self._started = True
         threading.Thread(target=self._worker, name="nrcarec", daemon=True).start()
         threading.Thread(target=self._mirror_loop, name="nrcarec-mirror",
+                         daemon=True).start()
+        threading.Thread(target=self._watch_sites, name="nrcarec-sites",
                          daemon=True).start()
         logger.info("NRCarec 연동 켜짐 (재전송 간격 %.0f분)",
                     _cooldown() / 60.0)
@@ -158,6 +174,14 @@ class _Sender:
                 doc_id = f"{KIND}_{_safe(client_id)}_{int(now)}"
                 self._last_sent[client_id] = now
                 self._recent[client_id] = (doc_id, now)
+                if received_at is not None:
+                    key = (client_id, float(received_at))
+                    self._doc_by_event[key] = doc_id
+                    # 무한정 쌓이지 않게 오래된 쪽부터 버린다. 부위는 경보
+                    # 직후에 적으므로 한참 지난 것은 쓸 일이 없다.
+                    if len(self._doc_by_event) > 500:
+                        for k in list(self._doc_by_event)[:250]:
+                            self._doc_by_event.pop(k, None)
 
             risky = data.get("risky_idx") or []
             self._put(("event", {
@@ -211,6 +235,8 @@ class _Sender:
                     self._send_event(payload)
                 elif kind == "image":
                     self._send_image(payload)
+                elif kind == "site":
+                    self._send_site(payload)
             except Exception as e:
                 # 여기서 죽으면 이후 경고가 전부 막힌다. 무슨 일이 있어도 계속.
                 logger.warning("[NRCarec] 전송 실패(%s): %s", kind, e)
@@ -347,6 +373,84 @@ class _Sender:
                     and "registration-token-not-registered" in str(r.exception)):
                 db.collection("push_tokens").document(token).delete()
 
+    # ---------- 부위 ----------
+
+    def notify_site(self, client_id, received_at, site):
+        """압력 대시보드에서 적은 부위를 NRCarec 으로도 올린다.
+
+        어느 경고였는지 모르면(서버를 껐다 켠 뒤 등) 조용히 넘어간다.
+        로컬 기록에는 이미 붙었으므로 잃는 것은 NRCarec 쪽 표시뿐이다."""
+        if not self.enabled or self.dry_run:
+            return
+        try:
+            with self._lock:
+                doc_id = self._doc_by_event.get((client_id, received_at))
+            if not doc_id:
+                return
+            self._put(("site", {"doc_id": doc_id, "site": site}))
+        except Exception as e:
+            logger.warning("[NRCarec] 부위 담기 실패: %s", e)
+
+    def _send_site(self, p):
+        db = self._db()
+        db.collection("pressure_sites").document(p["doc_id"]).set({
+            "site": p["site"],
+            "at": self._firestore.SERVER_TIMESTAMP,
+            # 이 표시가 없으면 우리가 올린 것을 구독으로 되받아 다시
+            # 로컬에 쓰는 일이 끝없이 돈다.
+            "source": "server",
+        }, merge=True)
+        logger.info("[NRCarec] 부위 올림 doc=%s site=%r", p["doc_id"], p["site"])
+
+    def _watch_sites(self):
+        """NRCarec 에서 적은 부위를 받아 로컬 warnings.log 에도 붙인다.
+
+        켤 때 기존 문서가 한꺼번에 들어오는데, 그것도 그대로 적용한다.
+        서버가 꺼져 있는 동안 폰으로 적어 둔 부위가 그때 따라 붙는다."""
+        if self._annotate is None:
+            return
+        try:
+            db = self._db()
+            self._sites_watch = db.collection("pressure_sites").on_snapshot(
+                lambda docs, changes, t: self._on_sites(docs, changes)
+            )
+            logger.info("[NRCarec] 부위 동기화 구독 시작")
+        except Exception as e:
+            logger.warning("[NRCarec] 부위 동기화 구독 실패: %s", e)
+
+    def _on_sites(self, docs, changes):
+        for change in changes:
+            if change.type.name == "REMOVED":
+                continue
+            try:
+                self._apply_site(change.document)
+            except Exception as e:
+                # 한 건이 실패해도 나머지는 붙어야 한다.
+                logger.warning("[NRCarec] 부위 반영 실패: %s", e)
+
+    def _apply_site(self, doc):
+        data = doc.to_dict() or {}
+        if data.get("source") == "server":
+            return  # 우리가 올린 것. 되받아 다시 쓰지 않는다.
+
+        site = (data.get("site") or "").strip()
+        if not site:
+            return
+
+        # 어느 경고인지는 경보 문서에 적어 둔 값으로 찾는다. 메모리에 기대지
+        # 않으므로 서버를 껐다 켜도 이어진다.
+        alert = self._db().collection("notification_log").document(doc.id).get()
+        if not alert.exists:
+            return
+        a = alert.to_dict() or {}
+        client_id = a.get("deviceId")
+        received_at = a.get("receivedAt")
+        if not client_id or received_at is None:
+            return
+
+        if self._annotate(client_id, float(received_at), site):
+            logger.info("[NRCarec] 부위 반영 client=%s site=%r", client_id, site)
+
     # ---------- 설정 거울 ----------
 
     def _mirror_loop(self):
@@ -426,3 +530,4 @@ _sender = _Sender()
 configure = _sender.configure
 notify_event = _sender.notify_event
 notify_image = _sender.notify_image
+notify_site = _sender.notify_site

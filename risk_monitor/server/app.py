@@ -194,9 +194,6 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
     connection_monitor = ConnectionMonitor(registry, timeout_s=client_timeout_s)
     connection_monitor.start()
     name_store = ClientNameStore(warning_dir)
-    # 경고를 NRCarec(간호 기록 앱) 으로도 올린다. NRCAREC_SERVICE_ACCOUNT
-    # 가 비어 있으면 아무것도 하지 않으므로, 안 쓰는 설치에는 영향이 없다.
-    nrcarec_alert.configure(registry, name_store)
 
     def _client_id():
         client_id = request.args.get("client_id")
@@ -249,6 +246,16 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
             state = registry.get_or_create(client_id)
             app.logger.info("client %s: config initialized -> %s", client_id, state.get_config())
         return entry
+
+    def _annotate_site_locally(client_id, received_at, site):
+        """NRCarec 에서 적은 부위를 로컬 warnings.log 에도 붙인다."""
+        entry = _get_client_entry(client_id)
+        return entry["warning_store"].annotate_site(received_at, site)
+
+    # 경고를 NRCarec(간호 기록 앱) 으로도 올리고, 거기서 적은 부위를 받아
+    # 로컬 기록에도 붙인다. NRCAREC_SERVICE_ACCOUNT 가 비어 있으면 아무것도
+    # 하지 않으므로, 안 쓰는 설치에는 영향이 없다.
+    nrcarec_alert.configure(registry, name_store, _annotate_site_locally)
 
     @app.get("/api/config/pending")
     def get_pending_config():
@@ -565,6 +572,9 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
         found = entry["warning_store"].annotate_site(received_at, site)
         if not found:
             return jsonify({"status": "error", "message": "no matching warning"}), 404
+        # 여기서 적은 부위가 NRCarec 에도 보이게 한다. 어느 경고였는지
+        # 모르면(서버를 껐다 켠 뒤 등) 조용히 넘어간다 — 로컬에는 이미 붙었다.
+        nrcarec_alert.notify_site(_client_id(), received_at, site)
         return jsonify({"status": "ok"})
 
     @app.get("/api/latest")

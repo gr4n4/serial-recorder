@@ -127,6 +127,7 @@ setx NRCAREC_COOLDOWN_SEC 900
 |---|---|
 | `notification_log/{id}` | 경보 한 건. 제목·본문·센서 이름·셀 수 |
 | `pressure_snapshots/{id}` | 그 순간 스냅샷 PNG(base64, 약 3KB). 경보와 같은 문서 ID |
+| `pressure_sites/{id}` | 간호사가 적은 위험 발생 부위. 양쪽에서 적고 양쪽에 남는다 |
 | `settings/pressure_status` | 임계값·센서 목록을 **읽기 전용으로 비춰 둔 것** |
 
 스냅샷을 경보 문서와 떼어 놓은 이유: `notification_log` 는 앱의 다섯 군데가
@@ -137,6 +138,20 @@ setx NRCAREC_COOLDOWN_SEC 900
 이 대시보드다. 원본을 둘로 만들면 어느 쪽이 맞는지 정할 수 없어진다. 다만
 간호사가 "지금 몇으로 돼 있나"를 NRCarec 한 곳에서 볼 수 있어야 해서 값만
 흘려 보낸다.
+
+## 부위는 어느 쪽에서 적어도 양쪽에 남는다
+
+```
+대시보드 팝업에서 적음 ──▶ warnings.log ──▶ Firestore ──▶ NRCarec
+NRCarec 에서 적음      ──▶ Firestore ──▶ (구독) ──▶ warnings.log
+```
+
+나중에 적은 쪽이 남는다. 한 경보에 부위를 두 번 다르게 적을 일은 없다.
+
+서버가 꺼져 있는 동안 폰으로 적어 둔 부위는, 서버를 켤 때 한꺼번에
+따라 붙는다. 반대로 **대시보드에서 적은 부위는 서버를 껐다 켠 뒤에는
+NRCarec 으로 안 올라간다** — 어느 경고였는지를 메모리에만 들고 있기
+때문이다. 로컬 기록에는 남으므로 잃는 것은 NRCarec 쪽 표시뿐이다.
 
 ## 알림을 끄는 곳
 
