@@ -15,7 +15,7 @@ python cmd/start.py
 - 포트: `/dev/ttyUSB0`
 - 저장 경로: `~/sensor_logs/log_YYYYMMDD_HHMMSS.csv`
 - 주기: 1초 (1 Hz)
-- 통신 설정: GUI 기본값과 동일 (`baud=921600, cols=32, rows=64, header=A55A, pre=6, post=2`)
+- 통신 설정: GUI 기본값과 동일 (`baud=921600, cols=32, rows=64, header=A55A01060801`)
 - 실행 즉시 녹화 시작, `Ctrl+C`로 중단
 
 포트가 없으면 `FileNotFoundError`로 즉시 중단됩니다.
@@ -28,9 +28,7 @@ python cmd/start.py
 | `--baud`            | `921600`          | 보드레이트                                                                        |
 | `--cols`            | `32`              | 매트리스 열 수                                                                    |
 | `--rows`            | `64`              | 매트리스 행 수                                                                    |
-| `--header`          | `A55A`            | 프레임 헤더 (hex)                                                                 |
-| `--pre`             | `6`               | 헤더 뒤 skip 바이트                                                               |
-| `--post`            | `2`               | 페이로드 뒤 skip 바이트                                                           |
+| `--header`          | `A55A01060801`    | 프레임 헤더 (hex)                                                                 |
 | `--interval`        | `1.0`             | 저장 주기 (초, `0` = 모든 프레임)                                                 |
 | `--outdir`          | `~/sensor_logs/`  | 저장 디렉토리 (파일명은 항상 `log_<timestamp>.csv`)                               |
 | `--upload`              | off               | wandb로 실시간 메트릭 스트리밍 + CSV 아티팩트 업로드. 파일은 **시스템 날짜 변경 시 자동 회전** |
@@ -76,7 +74,7 @@ python cmd/start.py --outdir /tmp/sensor
 python cmd/start.py --interval 0
 
 # 해상도/헤더 변경
-python cmd/start.py --cols 64 --rows 32 --header A55A --pre 6 --post 2
+python cmd/start.py --cols 32 --rows 64 --header A55A01060801
 
 # wandb로 업로드 (실시간 메트릭 + 날짜 변경 시 CSV 아티팩트)
 python cmd/start.py --upload --wandb-project sensor-recorder --wandb-run-name bed01
@@ -144,7 +142,7 @@ python -m pytest tests/test_dry_run.py -v
 
 ```
 [rec] writing to /home/nrc/sensor_logs/log_20260414_152030.csv
-[cfg] port=/dev/ttyUSB0 baud=921600 cols=32 rows=64 header=A55A pre=6 post=2 interval=1.0s
+[cfg] port=/dev/ttyUSB0 baud=921600 cols=32 rows=64 header=A55A01060801 interval=1.0s
 [serial] Connecting to /dev/ttyUSB0...
 [serial] Connected to /dev/ttyUSB0
 [rec] recording... press Ctrl+C to stop
@@ -223,7 +221,7 @@ python cmd/calibration.py [--samples 10] [--port /dev/ttyUSB0] [--outpath name]
 | `--samples`                                                 | `10`           | 평균 낼 프레임 수                        |
 | `--timeout`                                                 | `10.0`         | 프레임 수신 최대 대기 시간 (초)          |
 | `--outpath`                                                 | 자동           | `~/sensor_logs/baseline_<timestamp>.csv` |
-| `--baud`, `--cols`, `--rows`, `--header`, `--pre`, `--post` | GUI 기본값     |                                          |
+| `--baud`, `--cols`, `--rows`, `--header` | GUI 기본값     |                                          |
 
 ## 예시
 

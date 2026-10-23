@@ -192,19 +192,11 @@ class App:
         self.var_header = tk.StringVar(value=config.DEFAULT_HEADER_HEX)
         ttk.Entry(pkt_box, textvariable=self.var_header, width=10).grid(row=1, column=1, sticky="w", padx=4, pady=4)
 
-        ttk.Label(pkt_box, text="Pre skip", style="Panel.TLabel").grid(row=1, column=2, sticky="w", padx=4, pady=4)
-        self.var_pre = tk.StringVar(value=str(config.DEFAULT_PRE_SKIP))
-        ttk.Entry(pkt_box, textvariable=self.var_pre, width=6).grid(row=1, column=3, sticky="w", padx=4, pady=4)
-
-        ttk.Label(pkt_box, text="Post skip", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=4, pady=4)
-        self.var_post = tk.StringVar(value=str(config.DEFAULT_POST_SKIP))
-        ttk.Entry(pkt_box, textvariable=self.var_post, width=6).grid(row=2, column=1, sticky="w", padx=4, pady=4)
-
-        ttk.Label(pkt_box, text="Colormap", style="Panel.TLabel").grid(row=2, column=2, sticky="w", padx=4, pady=4)
+        ttk.Label(pkt_box, text="Colormap", style="Panel.TLabel").grid(row=1, column=2, sticky="w", padx=4, pady=4)
         self.var_cmap = tk.StringVar(value="jet")
         cmap_cb = ttk.Combobox(pkt_box, textvariable=self.var_cmap, width=10, state="readonly",
                                values=["jet", "viridis", "gray", "inferno", "magma"])
-        cmap_cb.grid(row=2, column=3, sticky="w", padx=4, pady=4)
+        cmap_cb.grid(row=1, column=3, sticky="w", padx=4, pady=4)
         cmap_cb.bind("<<ComboboxSelected>>", lambda e: self._on_cmap_change())
 
         # --- Recording group ---
@@ -285,10 +277,7 @@ class App:
 
     # ---------------- Handlers ----------------
     def _refresh_ports(self):
-        ports = [
-            p.device for p in serial.tools.list_ports.comports()
-            if "ttyUSB" in p.device or "ttyACM" in p.device
-        ]
+        ports = sorted(p.device for p in serial.tools.list_ports.comports())
         self.cb_port["values"] = ports
         if self.var_port.get() not in ports:
             self.var_port.set(ports[0] if ports else "")
@@ -315,15 +304,11 @@ class App:
         header = bytes.fromhex(header_hex)
         if not header:
             raise ValueError("Header must not be empty")
-        pre = int(self.var_pre.get())
-        post = int(self.var_post.get())
-        if pre < 0 or post < 0:
-            raise ValueError("pre/post skip must be >= 0")
-        return port, baud, cols, rows, header, pre, post
+        return port, baud, cols, rows, header
 
     def _on_connect(self):
         try:
-            port, baud, cols, rows, header, pre, post = self._parse_inputs()
+            port, baud, cols, rows, header = self._parse_inputs()
         except Exception as e:
             messagebox.showerror("Invalid input", str(e))
             return
@@ -336,7 +321,7 @@ class App:
 
         self.view.resize_grid(rows, cols)
 
-        self.parser = FrameParser(cols, rows, header, pre, post, self._on_frame)
+        self.parser = FrameParser(cols, rows, header, self._on_frame)
         self.reader = SerialReader(port, baud, self.parser, on_status=self._on_status)
         self.reader.start()
 

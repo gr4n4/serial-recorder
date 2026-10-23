@@ -53,13 +53,14 @@ python cmd/start.py
 
 ```
 offset  size   field
-0       2      HEADER    (A5 5A)
-2       6      PRE_SKIP
-8       N      PAYLOAD   (cols × rows bytes, 8-bit unsigned, row-major)
-8+N     2      POST_SKIP
+0       6      HEADER    (A5 5A 01 06 08 01)
+6       N      PAYLOAD   (cols × rows bytes, 8-bit unsigned, row-major)
+6+N     2      CHECKSUM  (little-endian uint16, 앞의 모든 바이트(헤더 포함)의 합 & 0xFFFF)
 ```
 
-기본값: `cols=64, rows=32, baud=921600`. GUI에서는 모두 변경 가능.
+기본값: `cols=32, rows=64, baud=921600` (패킷 전체 2056 bytes). GUI에서 cols/rows/header 변경 가능.
+
+체크섬이 맞지 않거나 길이가 부족한 패킷은 버려지고 다음 헤더에서 재동기화합니다 (`FrameParser.checksum_errors`로 집계).
 
 ## GUI Controls
 

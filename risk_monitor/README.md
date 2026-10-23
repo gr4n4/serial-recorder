@@ -53,11 +53,15 @@
    ```bash
    ./set_server_ip.sh <서버-IP>
    ```
-3. 클라이언트 시작
+3. 클라이언트 ID 설정 (대시보드에 표시될 이름, 장치마다 고유하게 지정)
+   ```bash
+   ./set_client_id.sh <client-id>
+   ```
+4. 클라이언트 시작
    ```bash
    ./start_client.sh
    ```
-4. 클라이언트 중지
+5. 클라이언트 중지
    ```bash
    ./stop_client.sh
    ```
@@ -92,7 +96,7 @@ python -m client.main --dry-run --server-url http://localhost:5000 \
 | `POST /event`가 올 때마다 | `warnings.log`에 JSON 한 줄 append |
 | `POST /image`가 올 때마다 | `images/<received_at>.png` |
 
-경로: `<warning-dir>`, 기본 Windows에서 `%APPDATA%\carerobot\press_warnings`, 그 외(dev/CI)는 `~/press_warnings`. `--warning-dir`로 변경 가능:
+경로: `<warning-dir>`, 기본값은 exe로 실행 시 exe와 같은 폴더의 `press_warnings` (배포 기준 `%USERPROFILE%\pressure-server\press_warnings`, `build_windows.bat`으로 재빌드해도 유지됨). 소스로 실행 시 Windows에서 `%APPDATA%\carerobot\press_warnings`, 그 외(dev/CI)는 `~/press_warnings`. `--warning-dir`로 변경 가능:
 
 ```bash
 python -m server.app --port 5000 --warning-dir /var/log/pressure/warnings
@@ -188,7 +192,7 @@ pytest server/tests -v
 
 ### mock_sensor — 하드웨어 없이 /dev/ttyUSB0 에뮬레이션
 
-`client/dumpy_data/Calib31.CSV`(실제 녹화된 프레임 CSV, CsvLogger wide format)를 읽어 랜덤한 행(row=프레임)부터 순서대로 실제 센서 패킷 포맷(header+payload)으로 `socat`이 만든 가상 시리얼 장치에 스트리밍합니다. `client/main.py --port /dev/ttyUSB0` 또는 `pressure_recorder`의 GUI가 실제 하드웨어처럼 이 장치를 열어 사용할 수 있습니다.
+`client/dumpy_data/Calib31.CSV`(실제 녹화된 프레임 CSV, CsvLogger wide format)를 읽어 랜덤한 행(row=프레임)부터 순서대로 실제 센서 패킷 포맷(header+payload+checksum 2바이트)로 `socat`이 만든 가상 시리얼 장치에 스트리밍합니다. `client/main.py --port /dev/ttyUSB0` 또는 `pressure_recorder`의 GUI가 실제 하드웨어처럼 이 장치를 열어 사용할 수 있습니다.
 
 `socat` 설치 필요 (`sudo apt install socat`). `/dev/ttyUSB0`에 심볼릭 링크를 만들려면 보통 sudo 권한이 필요합니다 — 권한 없이 테스트하려면 `--link /tmp/ttyUSB0` 같은 경로를 쓰고 client의 `--port`도 그 경로로 맞추면 됩니다.
 

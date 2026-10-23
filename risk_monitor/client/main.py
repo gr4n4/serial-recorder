@@ -16,8 +16,7 @@ send attempt's success/failure is logged to send.log.
 
 Usage:
     python -m client.main [--port /dev/ttyUSB0] [--baud 921600]
-                           [--cols 32] [--rows 64] [--header A55A]
-                           [--pre 6] [--post 2]
+                           [--cols 32] [--rows 64] [--header A55A01060801]
                            [--server-url http://localhost:5000]
                            [--poll-interval 60] [--command-poll-interval 2]
                            [--http-timeout 5] [--alert-cooldown 300]
@@ -25,6 +24,7 @@ Usage:
                            [--dry-run] [--dry-fps 30]
 """
 import argparse
+import json
 import logging
 import logging.handlers
 import os
@@ -61,6 +61,7 @@ logger = logging.getLogger("client.main")
 
 _APP_LOG_HANDLER_MARKER = "_pressure_app_log_handler"
 APP_LOG_BACKUP_DAYS = 14
+FRAME_ERROR_LOG_INTERVAL_S = 60.0
 
 
 def configure_app_log_file(warning_log_dir):
@@ -99,8 +100,6 @@ def build_parser():
     p.add_argument("--cols", type=int, default=ClientConfig.cols)
     p.add_argument("--rows", type=int, default=ClientConfig.rows)
     p.add_argument("--header", default=ClientConfig.header_hex, help="hex string, e.g. A55A")
-    p.add_argument("--pre", type=int, default=ClientConfig.pre_skip)
-    p.add_argument("--post", type=int, default=ClientConfig.post_skip)
     p.add_argument("--server-url", default=ClientConfig.server_base_url)
     p.add_argument("--config-path", default=ClientConfig.config_path)
     p.add_argument("--event-path", default=ClientConfig.event_path)
@@ -222,8 +221,9 @@ class ClientApp:
         self.image_sender = ImageSender(
             args.server_url, args.image_path, timeout_s=args.http_timeout,
             retry_delay_s=args.http_retry_delay, on_status=self.on_image_send_status,
-            client_id=client_id,
+            client_id=client_id, prepare=self._prepare_image,
         )
+        self._last_frame_error_log = -float("inf")
         self.state_sender = StateSender(
             args.server_url, args.state_path, timeout_s=args.http_timeout,
             retry_delay_s=args.http_retry_delay, on_status=self.on_state_send_status,
@@ -235,10 +235,22 @@ class ClientApp:
                                       self.on_frame, on_status=self.on_serial_status)
         else:
             header = bytes.fromhex(args.header.strip().replace(" ", ""))
-            parser = FrameParser(args.cols, args.rows, header, args.pre, args.post, self.on_frame)
+            parser = FrameParser(args.cols, args.rows, header, self.on_frame)
             self.reader = SerialReader(args.port, args.baud, parser, on_status=self.on_serial_status)
 
     def on_frame(self, ts, frame):
+        # FrameParser/FakeReader swallow callback exceptions, so log them
+        # here (at most once a minute) -- otherwise a failure would silently
+        # disable risk detection.
+        try:
+            self._process_frame(ts, frame)
+        except Exception:
+            now = time.monotonic()
+            if now - self._last_frame_error_log >= FRAME_ERROR_LOG_INTERVAL_S:
+                self._last_frame_error_log = now
+                logger.exception("[frame] processing failed")
+
+    def _process_frame(self, ts, frame):
         pressure_vector = frame.reshape(-1)
         self.latest_frame.set(ts, pressure_vector)
 
@@ -271,10 +283,26 @@ class ClientApp:
         self.warning_log.log_warning(event_payload)
         self.sender.enqueue(event_payload)
 
-        # Current frame + risk-point overlay, not an accumulated image.
+        # Rendered + saved on the image sender's worker thread (see
+        # _prepare_image), so the serial reader isn't blocked by PNG
+        # encoding and SD-card writes.
+        self.image_sender.enqueue({
+            "timestamp": ts, "pressure_vector": pressure_vector, "fired_idx": fired_idx,
+        })
+
+    def _prepare_image(self, payload):
+        """ImageSender worker thread: current frame + risk-point overlay
+        (not an accumulated image), saved locally and sent together with
+        the frame it was rendered from."""
+        payload = dict(payload)
+        pressure_vector = payload.pop("pressure_vector")
+        fired_idx = payload.pop("fired_idx")
+        ts = payload["timestamp"]
         image_bytes = render_risk_image(pressure_vector, self.args.rows, self.args.cols, fired_idx)
         self.warning_log.save_image(image_bytes, ts)
-        self.image_sender.enqueue({"image": image_bytes, "timestamp": ts})
+        payload["image"] = image_bytes
+        payload["pressure"] = json.dumps(pressure_vector.tolist())
+        return payload
 
     def on_command(self, command):
         if command == "state":
@@ -371,7 +399,8 @@ def resolve_client_id(args):
             "그대로 두면 다른 기기와 겹칩니다. 겹치면 서버가 둘을 한 대로 묶어서,\n"
             "침대 하나가 감시에서 조용히 빠집니다.\n"
             "\n"
-            "둘 중 하나로 이름을 정해 주세요.\n"
+            "아래 중 하나로 이름을 정해 주세요.\n"
+            "  계속 쓸 이름 : ./set_client_id.sh 421호   (.env 에 적어 둔다)\n"
             f"  이번만    : python -m client.main --client-id 421호 --port {args.port}\n"
             "  기기 이름 : sudo hostnamectl set-hostname pi-421   (재부팅 뒤 적용)\n"
         )

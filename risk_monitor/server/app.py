@@ -46,8 +46,10 @@ JSON/form field on POST; defaults to "default" if omitted):
   GET  /image/latest -> the most recently received warning snapshot PNG
   GET  /dashboard   -> HTML dashboard
   GET  /api/clients -> [{"client_id", "display_name", "connected", "last_seen",
-                        "has_warning"}, ...] for every client that has ever
+                        "has_warning", "latest"}, ...] for every client that has ever
                         contacted the server -- powers the dashboard's client grid
+                        ("latest" is the same payload as /api/latest, so each
+                        card's thumbnail matches that client's detail view)
   POST /api/clients/rename -> {"name"}: sets (or, if empty, clears) the
                         dashboard-assigned display name for this client_id
   GET  /api/latest  -> JSON snapshot for the dashboard poller, including
@@ -67,13 +69,16 @@ JSON/form field on POST; defaults to "default" if omitted):
 Usage:
     python -m server.app [--host 0.0.0.0] [--port 5000]
                           [--cols 32] [--rows 64]
-                          [--warning-dir %APPDATA%\carerobot\press_warnings]
+                          [--warning-dir <exe folder>\press_warnings
+                                         (source run: %APPDATA%\carerobot\press_warnings)]
                           [--client-timeout 10.0]
 """
 import argparse
+import hashlib
 import io
 import json
 import logging
+import math
 import re
 import sys
 import threading
@@ -104,12 +109,80 @@ from server.warning_store import WarningStore
 
 DEFAULT_CLIENT_ID = "default"
 _UNSAFE_CLIENT_ID_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
+_MAX_CLIENT_DIR_LEN = 64
+_WINDOWS_RESERVED_NAMES = (
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
 
 
 def _sanitize_client_id(client_id):
     """A client_id becomes a directory name (<warning_dir>/<client_id>/),
-    so strip anything that isn't safe there."""
-    return _UNSAFE_CLIENT_ID_CHARS.sub("_", client_id)
+    so strip anything that isn't safe there. Ordinary hostnames pass
+    through unchanged; anything that had to be altered (unsafe chars,
+    "."/"..", leading/trailing dots, Windows reserved names, overlong ids)
+    gets a short hash of the original appended, so the result can never
+    escape warning_dir and two distinct ids (e.g. "pi a" / "pi_a") never
+    share a directory."""
+    safe = _UNSAFE_CLIENT_ID_CHARS.sub("_", client_id).strip(".")
+    if (safe != client_id or not safe or len(safe) > _MAX_CLIENT_DIR_LEN
+            or safe.split(".")[0].upper() in _WINDOWS_RESERVED_NAMES):
+        digest = hashlib.sha1(client_id.encode("utf-8")).hexdigest()[:8]
+        safe = f"{(safe or 'client')[:_MAX_CLIENT_DIR_LEN]}-{digest}"
+    return safe
+
+
+_CONFIG_NUMBER_RULES = {
+    # key: (minimum, minimum is exclusive)
+    "calibration_factor": (0.0, True),
+    "critical_pressure": (0.0, False),
+    "critical_time": (0.0, True),
+}
+_CONFIG_GRID_KEYS = ("cols", "rows")
+
+
+def _validate_config_updates(updates, current):
+    """Returns (clean_updates, error_message). Rejects values the client
+    can't run with (e.g. calibration_factor=0 -> division by zero on every
+    frame, silently disabling detection) and drops unknown keys such as the
+    request's own client_id so they never end up in config.json."""
+    if not isinstance(updates, dict):
+        return None, "config body must be a JSON object"
+    clean = {}
+    for key, (minimum, exclusive) in _CONFIG_NUMBER_RULES.items():
+        if key not in updates:
+            continue
+        value = updates[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(value):
+            return None, f"{key} must be a finite number"
+        if value < minimum or (exclusive and value == minimum):
+            op = ">" if exclusive else ">="
+            return None, f"{key} must be {op} {minimum:g}"
+        clean[key] = float(value)
+    for key in _CONFIG_GRID_KEYS:
+        if key not in updates:
+            continue
+        value = updates[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            return None, f"{key} must be a positive integer"
+        clean[key] = value
+    n_cells = clean.get("cols", current["cols"]) * clean.get("rows", current["rows"])
+    if "mask_excluded_idx" in updates:
+        mask = updates["mask_excluded_idx"]
+        if not isinstance(mask, list) or any(
+            isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < n_cells
+            for i in mask
+        ):
+            return None, f"mask_excluded_idx must be a list of cell indices in [0, {n_cells})"
+        clean["mask_excluded_idx"] = sorted(set(mask))
+    elif "cols" in clean or "rows" in clean:
+        # Grid resized without a new mask: drop now out-of-range cells.
+        clean["mask_excluded_idx"] = [
+            i for i in current.get("mask_excluded_idx", []) if 0 <= i < n_cells
+        ]
+    return clean, None
 
 
 MOCK_WARNING_DATA_PATH = Path(__file__).resolve().parent / "mock_warning_data.json"
@@ -276,8 +349,14 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
             if cfg is None:
                 return jsonify({"status": "error", "message": "no pending config"}), 400
             if action == "restore":
+                clean, error = _validate_config_updates(cfg, state.get_config())
+                if error:
+                    app.logger.warning(
+                        "client %s: saved config rejected (%s) -> %s", client_id, error, cfg
+                    )
+                    return jsonify({"status": "error", "message": error}), 400
                 snapshot = _apply_config(
-                    state, entry["config_store"], cfg, "restored (confirmed)", client_id
+                    state, entry["config_store"], clean, "restored (confirmed)", client_id
                 )
             elif action == "default":
                 snapshot = _apply_config(
@@ -308,8 +387,12 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
         client_id = _client_id()
         entry = _get_client_entry(client_id)
         state = registry.get_or_create(client_id)
-        body = request.get_json(force=True)
-        snapshot = _apply_config(state, entry["config_store"], body, "updated", client_id)
+        body = request.get_json(force=True, silent=True)
+        clean, error = _validate_config_updates(body, state.get_config())
+        if error:
+            app.logger.warning("client %s: config update rejected (%s) -> %s", client_id, error, body)
+            return jsonify({"status": "error", "message": error}), 400
+        snapshot = _apply_config(state, entry["config_store"], clean, "updated", client_id)
         return jsonify(snapshot)
 
     def _handle_event(state, warning_store, client_id, data, log_prefix="EVENT", is_mock=False):
@@ -448,6 +531,7 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
         if pressure and len(pressure) == config["cols"] * config["rows"]:
             received_at = time.time()
             image_bytes = render_risk_image(pressure, config["rows"], config["cols"], [])
+            state.record_image(image_bytes)
             entry["warning_store"].save_image(image_bytes, received_at, is_status=True)
             entry["warning_store"].save_status(
                 pressure, config["cols"], config["rows"], received_at, is_status=True
@@ -473,11 +557,19 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
         # 방금 올린 경고에 이 그림을 붙인다. 올린 경고가 없으면(재전송 간격에
         # 걸려 안 올렸으면) 조용히 버린다.
         nrcarec_alert.notify_image(client_id, image_bytes)
-        latest_state = state.get_latest_state()
-        if latest_state and latest_state.get("pressure"):
-            config = state.get_config()
+        # The frame the image was rendered from travels with the image (form
+        # field "pressure", JSON list), so the saved status always matches
+        # this warning -- latest_state is a different, "state"-command
+        # snapshot (and record_event clears it anyway).
+        pressure = None
+        try:
+            pressure = json.loads(request.form.get("pressure") or "null")
+        except ValueError:
+            app.logger.warning("IMAGE client=%s: malformed pressure field ignored", client_id)
+        config = state.get_config()
+        if isinstance(pressure, list) and len(pressure) == config["cols"] * config["rows"]:
             entry["warning_store"].save_status(
-                latest_state["pressure"], config["cols"], config["rows"], received_at
+                pressure, config["cols"], config["rows"], received_at
             )
         return jsonify({"status": "ok", "received_at": received_at}), 200
 
@@ -493,6 +585,30 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
     def dashboard():
         return render_template("dashboard.html")
 
+    def _latest_payload(client_id, state):
+        """Shared by /api/latest and /api/clients, so the dashboard's client
+        card thumbnail and detail-view grid are drawn from identical data."""
+        snap = state.snapshot()
+        cols = snap["cols"]
+        latest_event = snap["latest_event"]
+        if latest_event is not None:
+            latest_event["risky_cells"] = idx_to_rowcol(latest_event.get("risky_idx", []), cols)
+            latest_event["pressure_mask_cells"] = idx_to_rowcol(
+                latest_event.get("pressure_mask_idx", []), cols
+            )
+        return {
+            "cols": cols,
+            "display_name": name_store.get(client_id),
+            "rows": snap["rows"],
+            "mask_excluded_cells": idx_to_rowcol(snap.get("mask_excluded_idx", []), cols),
+            "has_warning": latest_event is not None,
+            "latest_event": latest_event,
+            "latest_state": snap["latest_state"],
+            "has_image": snap["has_image"],
+            "connected": snap["connected"],
+            "last_seen": snap["last_seen"],
+        }
+
     @app.get("/api/clients")
     def api_clients():
         clients = []
@@ -500,12 +616,16 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
             client_state = registry.get(client_id)
             if client_state is None:
                 continue
+            config = client_state.get_config()
             clients.append({
                 "client_id": client_id,
                 "display_name": name_store.get(client_id),
                 "connected": client_state.is_connected(),
                 "last_seen": client_state.get_last_seen(),
                 "has_warning": client_state.has_warning(),
+                "critical_pressure": config["critical_pressure"],
+                "critical_time": config["critical_time"],
+                "latest": _latest_payload(client_id, client_state),
             })
         return jsonify({"clients": clients})
 
@@ -554,10 +674,8 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
         except ValueError:
             return jsonify({"status": "error", "message": "invalid received_at"}), 400
         is_mock = request.args.get("mock") == "1"
-        prefix = "mock_" if is_mock else ""
-        filename = f"{prefix}{received_at:.6f}.png"
-        path = entry["warning_store"].image_dir / filename
-        if not path.exists():
+        path = entry["warning_store"].find_image(received_at, is_mock=is_mock)
+        if path is None:
             return jsonify({"status": "error", "message": "no image for this warning"}), 404
         return send_file(str(path), mimetype="image/png")
 
@@ -581,26 +699,7 @@ def create_app(state=None, warning_dir=DEFAULT_WARNING_DIR,
     def api_latest():
         client_id = _client_id()
         state = registry.get_or_create(client_id)
-        snap = state.snapshot()
-        cols = snap["cols"]
-        latest_event = snap["latest_event"]
-        if latest_event is not None:
-            latest_event["risky_cells"] = idx_to_rowcol(latest_event.get("risky_idx", []), cols)
-            latest_event["pressure_mask_cells"] = idx_to_rowcol(
-                latest_event.get("pressure_mask_idx", []), cols
-            )
-        return jsonify({
-            "cols": cols,
-            "display_name": name_store.get(client_id),
-            "rows": snap["rows"],
-            "mask_excluded_cells": idx_to_rowcol(snap.get("mask_excluded_idx", []), cols),
-            "has_warning": latest_event is not None,
-            "latest_event": latest_event,
-            "latest_state": snap["latest_state"],
-            "has_image": snap["has_image"],
-            "connected": snap["connected"],
-            "last_seen": snap["last_seen"],
-        })
+        return jsonify(_latest_payload(client_id, state))
 
     app.config["_registry"] = registry
     app.config["_connection_monitor"] = connection_monitor
@@ -611,8 +710,8 @@ def build_parser():
     p = argparse.ArgumentParser(prog="server.app", description="Pressure risk monitoring server")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=5000)
-    p.add_argument("--cols", type=int, default=32)
-    p.add_argument("--rows", type=int, default=64)
+    p.add_argument("--cols", type=int, default=DEFAULT_COLS)
+    p.add_argument("--rows", type=int, default=DEFAULT_ROWS)
     p.add_argument("--warning-dir", default=DEFAULT_WARNING_DIR,
                     help="directory to log warnings.log and images/ into")
     p.add_argument("--client-timeout", type=float, default=DEFAULT_CLIENT_TIMEOUT_S,

@@ -1,6 +1,7 @@
 """HTTP REST communication with the server: config polling and event
 reporting. Both run on their own background threads so neither blocks the
 serial frame-processing callback."""
+import math
 import queue
 import threading
 import time
@@ -49,18 +50,26 @@ class ConfigPoller:
         )
         resp.raise_for_status()
         data = resp.json()
+        calibration_factor = float(data["calibration_factor"])
+        critical_pressure = float(data["critical_pressure"])
+        critical_time = float(data["critical_time"])
+        # Keep the previous thresholds rather than adopt values that would
+        # break (or silently disable) detection on every frame.
+        if not (math.isfinite(calibration_factor) and calibration_factor > 0):
+            raise ValueError(f"invalid calibration_factor: {calibration_factor}")
+        if not (math.isfinite(critical_pressure) and critical_pressure >= 0):
+            raise ValueError(f"invalid critical_pressure: {critical_pressure}")
+        if not (math.isfinite(critical_time) and critical_time > 0):
+            raise ValueError(f"invalid critical_time: {critical_time}")
         detection_mask = None
         if self.n_cells is not None:
             detection_mask = build_detection_mask(
                 self.n_cells, data.get("mask_excluded_idx", [])
             )
         self.runtime_config.update(
-            float(data["calibration_factor"]),
-            float(data["critical_pressure"]),
-            float(data["critical_time"]),
-            detection_mask,
+            calibration_factor, critical_pressure, critical_time, detection_mask,
         )
-        self.on_status(True, f"config updated: {data}")
+        self.on_status(True, f"config updated: {_summarize(data)}")
 
     def _run(self):
         while not self._stop.is_set():
@@ -128,6 +137,20 @@ class CommandPoller:
                 break
 
 
+def _summarize(payload):
+    """Compact description of a payload for the logs: long lists (e.g. the
+    2048-value pressure frame of a state report) are replaced by their
+    length so app.log/send.log don't grow by ~10 KB per send on the Pi's
+    SD card."""
+    parts = []
+    for key, value in payload.items():
+        if isinstance(value, (list, tuple)) and len(value) > 16:
+            parts.append(f"{key}=<{len(value)} items>")
+        else:
+            parts.append(f"{key}={value!r}")
+    return "{" + ", ".join(parts) + "}"
+
+
 class _QueuedPoster:
     """Base class for queue + worker-thread POSTers. Payloads are enqueued
     from whatever thread produces them (frame callback, command poller) and
@@ -184,7 +207,7 @@ class _QueuedPoster:
             try:
                 resp = self.session.post(self.url, json=payload, timeout=self.timeout_s)
                 resp.raise_for_status()
-                self.on_status(True, f"event sent: {payload}")
+                self.on_status(True, f"event sent: {_summarize(payload)}")
                 return
             except Exception as e:
                 if attempt >= self.MAX_ATTEMPTS:
@@ -232,12 +255,23 @@ class ImageSender(_QueuedPoster):
     QUEUE_FULL_MSG = "image queue full; dropped oldest pending image"
 
     def __init__(self, base_url, image_path, timeout_s=5.0, retry_delay_s=5.0,
-                 maxsize=4, on_status=None, session=None, client_id=""):
+                 maxsize=4, on_status=None, session=None, client_id="", prepare=None):
+        """prepare: optional callable(payload) -> payload, run on the worker
+        thread before sending -- lets the caller enqueue the raw frame and
+        have the (slow) PNG rendering/disk write happen here instead of in
+        the serial frame callback."""
         super().__init__(base_url.rstrip("/") + image_path, timeout_s=timeout_s,
                           retry_delay_s=retry_delay_s, maxsize=maxsize,
                           on_status=on_status, session=session, client_id=client_id)
+        self.prepare = prepare
 
     def _send(self, payload):
+        if self.prepare is not None:
+            try:
+                payload = self.prepare(payload)
+            except Exception as e:
+                self.on_status(False, f"image prepare failed, dropping: {e}")
+                return
         image_bytes = payload["image"]
         fields = {k: str(v) for k, v in payload.items() if k != "image"}
         files = {"image": ("risk.png", image_bytes, "image/png")}

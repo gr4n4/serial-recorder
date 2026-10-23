@@ -13,7 +13,10 @@ block_cipher = None
 
 a = Analysis(
     ["server/win_launcher.py"],
-    pathex=["."],
+    # ".." is the repo root: server/state.py imports common.config from there,
+    # which PyInstaller's analysis can't find from risk_monitor/ alone (the
+    # sys.path insert in state.py only runs at runtime, after analysis).
+    pathex=[".", ".."],
     binaries=[],
     datas=[
         ("server/templates", "server/templates"),
@@ -29,6 +32,7 @@ a = Analysis(
         "server.nrcarec_alert", "firebase_admin", "firebase_admin.messaging",
         "firebase_admin.credentials", "firebase_admin.firestore",
         "google.cloud.firestore",
+        "common", "common.config",
     ],
     hookspath=[],
     hooksconfig={},

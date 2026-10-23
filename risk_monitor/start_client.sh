@@ -21,6 +21,7 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 SERVER_IP="${SERVER_IP:-localhost}"
+CLIENT_ID="${CLIENT_ID:-}"
 
 RUN_DIR="$SCRIPT_DIR/run"
 LOG_DIR="$SCRIPT_DIR/logs"
@@ -46,7 +47,14 @@ fi
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-nohup "$PYTHON_BIN" -m client.main --server-url "http://${SERVER_IP}:5000" "$@" >> "$LOG_FILE" 2>&1 &
+CLIENT_ID_ARGS=()
+if [ -n "$CLIENT_ID" ]; then
+    CLIENT_ID_ARGS=(--client-id "$CLIENT_ID")
+fi
+
+# $@ comes last so an explicit --client-id passed on the command line
+# overrides the .env value (argparse keeps the last occurrence of a flag).
+nohup "$PYTHON_BIN" -m client.main --server-url "http://${SERVER_IP}:5000" "${CLIENT_ID_ARGS[@]}" "$@" >> "$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 disown
 

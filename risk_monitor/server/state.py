@@ -2,15 +2,28 @@
 pending monitor command, latest/history risk events, and the latest
 reported pressure state. A single global mutation lock is enough at this
 scale (mock_server/server.py uses the same pattern)."""
+import os
+import sys
 import threading
 import time
 from collections import deque
 
+# The sensor grid size (DEFAULT_COLS/DEFAULT_ROWS) lives in the repo-root
+# common/config.py, shared with pressure_recorder and the client, so it
+# only ever needs changing in one place. common/ sits one level above
+# risk_monitor/, which isn't on sys.path when the server is run as
+# `python -m server.app` from within risk_monitor/ (unlike client/main.py,
+# which already does this same insert).
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(_APP_ROOT)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from common.config import DEFAULT_COLS, DEFAULT_ROWS  # noqa: E402
+
 DEFAULT_CALIBRATION_FACTOR = 0.4755
 DEFAULT_CRITICAL_PRESSURE = 32.0
 DEFAULT_CRITICAL_TIME = 90.0
-DEFAULT_COLS = 32
-DEFAULT_ROWS = 64
 EVENT_HISTORY_MAXLEN = 50
 
 
@@ -58,12 +71,42 @@ class ServerState:
             return cmd
 
     def record_event(self, payload):
+        """The client only reports the cells that *just* fired, so a new
+        event is merged into the still-active warning instead of replacing
+        it -- otherwise cells from an earlier event that are still over
+        threshold would vanish from the live view (and clearing the newer
+        cells would drop the warning entirely). event_history keeps the raw
+        per-event record."""
         record = dict(payload)
         record["received_at"] = self._clock()
         with self._lock:
-            self.latest_event = record
+            self.latest_event = self._merge_into_latest(record)
             self.event_history.append(record)
+            # A new event has its own pressure_mask_idx silhouette; drop any
+            # earlier "현재 상태 요청" snapshot so the dashboard grid draws
+            # *this* event's silhouette instead of overlaying its risky
+            # cells on a stale, unrelated pressure snapshot (see
+            # clear_latest_state).
+            self.latest_state = None
         return record
+
+    def _merge_into_latest(self, record):
+        prev = self.latest_event
+        if not prev or bool(prev.get("is_mock")) != bool(record.get("is_mock")):
+            return record
+        new_idx = record.get("risky_idx") or []
+        new_pressure = record.get("risky_pressure") or [None] * len(new_idx)
+        merged = {}
+        prev_idx = prev.get("risky_idx") or []
+        prev_pressure = prev.get("risky_pressure") or [None] * len(prev_idx)
+        for i, p in zip(prev_idx, prev_pressure):
+            merged[i] = p
+        for i, p in zip(new_idx, new_pressure):
+            merged[i] = p  # newer reading wins for re-fired cells
+        updated = dict(record)
+        updated["risky_idx"] = list(merged.keys())
+        updated["risky_pressure"] = list(merged.values())
+        return updated
 
     def clear_event(self, cleared_idx):
         """Removes `cleared_idx` cells from latest_event's risky_idx (the
@@ -84,6 +127,9 @@ class ServerState:
             ]
             if not remaining:
                 self.latest_event = None
+                # The snapshot belongs to the warning that just ended; don't
+                # keep serving it from /image/latest.
+                self.latest_image = None
                 return None
             updated = dict(self.latest_event)
             updated["risky_idx"] = [i for i, _ in remaining]
@@ -104,6 +150,8 @@ class ServerState:
             )
             if self.latest_event and self.latest_event.get("is_mock"):
                 self.latest_event = self.event_history[-1] if self.event_history else None
+                if self.latest_event is None:
+                    self.latest_image = None
 
     def record_state(self, payload):
         with self._lock:

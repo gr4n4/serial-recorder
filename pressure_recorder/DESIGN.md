@@ -14,33 +14,31 @@
   - **Calibration** (현재 프레임을 baseline으로 저장 → 이후 프레임에서 차감)
   - **Reset Calibration** (baseline 제거)
   - **Rotate CW / CCW** (디스플레이 90° 단위 회전, 표시 전용)
-  - 해상도/헤더/오프셋/파일명 설정
+  - 해상도/헤더/파일명 설정
 - **자동 재연결**: 연결 상태에서 시리얼이 끊기면 백그라운드에서 자동 재연결 시도
 
 ## 2. 사양 (확정)
 
 | 항목              | 값                                    | 비고                        |
 | ----------------- | ------------------------------------- | --------------------------- |
-| 센서 해상도       | **cols × rows = 64 × 32** (기본)      | GUI에서 변경 가능           |
+| 센서 해상도       | **cols × rows = 32 × 64** (기본)      | GUI에서 변경 가능           |
 | 셀당 비트         | **8-bit unsigned**                    | 1 byte/cell                 |
 | Baudrate          | **921600**                            | 변경 가능                   |
-| 프레임 헤더       | **`A5 5A`** (2 bytes, hex)            | 변경 가능                   |
-| 헤더 뒤 skip      | **6 bytes**                           | 변경 가능                   |
+| 프레임 헤더       | **`A5 5A 01 06 08 01`** (6 bytes)     | 변경 가능                   |
 | 페이로드          | `cols × rows` bytes (기본 2048)       |                             |
-| 페이로드 뒤 skip  | **2 bytes**                           | 변경 가능 (checksum/footer) |
-| 한 패킷 전체 길이 | `2 + 6 + (cols×rows) + 2` (기본 2058) |                             |
+| 체크섬            | **2 bytes**, little-endian uint16     | 헤더+페이로드의 합 & 0xFFFF |
+| 한 패킷 전체 길이 | `6 + (cols×rows) + 2` (기본 2056)     | 고정 길이                   |
 
 ### 2.1 패킷 레이아웃
 
 ```
 offset  size  field
-0       2     HEADER  (A5 5A)
-2       6     PRE_SKIP (사용자 설정, 기본 6)
-8       N     PAYLOAD  (cols × rows bytes, 압력값)
-8+N     2     POST_SKIP (사용자 설정, 기본 2)
+0       6     HEADER   (A5 5A 01 06 08 01)
+6       N     PAYLOAD  (cols × rows bytes, 압력값)
+6+N     2     CHECKSUM (little-endian uint16 = sum(앞의 모든 바이트) & 0xFFFF)
 ```
 
-`N = cols × rows`. 페이로드는 row-major(또는 col-major)로 해석 — 실제 센서 순서에 맞춰 `FrameParser`에서 reshape.
+`N = cols × rows`. 페이로드는 row-major로 해석 — `FrameParser`에서 `reshape(rows, cols)`.
 
 ## 3. 아키텍처
 
@@ -68,7 +66,7 @@ offset  size  field
 
 - 표준 라이브러리 Tkinter라 추가 의존성 최소
 - `imshow`의 `set_data()` + `canvas.draw_idle()`로 30 Hz 갱신 충분
-- 64×32 정도면 matplotlib로 충분히 부드러움
+- 32×64 정도면 matplotlib로 충분히 부드러움
 - **다크 테마**: `clam` 기반 ttk 커스텀 스타일 (패널/보더/액센트 컬러), LabelFrame으로 Serial/Packet/Recording 그룹핑
 - 연결 상태는 좌하단 컬러 도트(녹색/빨강)로 표시
 - 기본 폰트 12pt, 헤더 18pt — 가독성 우선
@@ -76,20 +74,24 @@ offset  size  field
 ## 5. 모듈 구조
 
 ```
-sensor_recorder/
+pressure_recorder/
 ├── DESIGN.md
 ├── requirements.txt
 ├── main.py                  # 진입점
 ├── sensor/
 │   ├── __init__.py
-│   ├── config.py            # 기본값 (cols=64, rows=32, baud=921600, header=A55A, pre=6, post=2)
-│   ├── serial_reader.py     # SerialReader 스레드
-│   ├── frame_parser.py      # 헤더 동기화 + 프레임 추출
+│   ├── config.py            # 기본값 (../common/config.py 재노출)
 │   ├── csv_logger.py        # CSV 저장 (wide format)
 │   ├── colormap_view.py     # Tk + matplotlib 위젯
 │   └── app.py               # Tk 메인 윈도우, 컨트롤
+├── cmd/                     # CLI 도구 (start / display / calibration)
 └── tests/
     └── test_frame_parser.py
+
+../common/                   # risk_monitor/client와 공유
+├── config.py                # DEFAULT_COLS=32, DEFAULT_ROWS=64, DEFAULT_HEADER_HEX 등
+├── serial_reader.py         # SerialReader 스레드
+└── frame_parser.py          # 헤더 동기화 + 체크섬 검증 + 프레임 추출
 ```
 
 ## 6. 주요 컴포넌트
@@ -97,15 +99,14 @@ sensor_recorder/
 ### 6.1 `config.py`
 
 ```python
-DEFAULT_COLS = 64
-DEFAULT_ROWS = 32
-DEFAULT_BAUD = 921600
-DEFAULT_HEADER_HEX = "A55A"     # bytes.fromhex() 로 변환
-DEFAULT_PRE_SKIP = 6
-DEFAULT_POST_SKIP = 2
+DEFAULT_COLS = 32
+DEFAULT_ROWS = 64
+DEFAULT_HEADER_HEX = "A55A01060801"     # bytes.fromhex() 로 변환
 ```
 
-### 6.2 `SerialReader` ([sensor/serial_reader.py](sensor/serial_reader.py))
+`sensor/config.py`는 `../common/config.py`의 값을 그대로 가져옵니다. baud 기본값(921600)은 GUI/CLI 쪽에서 지정합니다.
+
+### 6.2 `SerialReader` ([common/serial_reader.py](../common/serial_reader.py))
 
 - `pyserial.Serial(port, baudrate, timeout=...)`
 - 백그라운드 스레드 루프:
@@ -115,17 +116,18 @@ DEFAULT_POST_SKIP = 2
 - `stop()` 플래그로 graceful shutdown
 - 상태 콜백(`on_status(connected: bool, msg: str)`)으로 GUI에 연결/끊김/재연결 알림
 
-### 6.3 `FrameParser` ([sensor/frame_parser.py](sensor/frame_parser.py))
+### 6.3 `FrameParser` ([common/frame_parser.py](../common/frame_parser.py))
 
 - 내부 바이트 버퍼(`bytearray`) 유지
 - 알고리즘:
-  1. 버퍼에서 헤더(`A5 5A`) 검색
-  2. 헤더 발견 시, `pre_skip + cols*rows + post_skip` 바이트가 모일 때까지 대기
-  3. 압력 페이로드만 잘라 `np.frombuffer(..., dtype=np.uint8).reshape(rows, cols)` (**row-major**)
-  4. 소비된 바이트는 버퍼에서 제거
-  5. 다음 헤더 탐색 반복
-- 파라미터(`cols, rows, header, pre_skip, post_skip`)는 생성자 주입 → 런타임 변경 시 재생성
-- **단위 테스트 대상**: 정상 프레임, 헤더 중간 끊김, 잡음 섞임, 부분 수신
+  1. 버퍼에서 헤더(`A5 5A 01 06 08 01`) 검색
+  2. 헤더 발견 시, 패킷 전체 길이(`헤더 + cols*rows + 2`) 바이트가 모일 때까지 대기
+  3. 체크섬 검증: 마지막 2바이트(little-endian) == 앞의 모든 바이트 합 & 0xFFFF
+  4. 일치하면 페이로드만 잘라 `np.frombuffer(..., dtype=np.uint8).reshape(rows, cols)` (**row-major**)로 `on_frame` 호출, 패킷 전체를 버퍼에서 제거
+  5. 불일치하면 `checksum_errors`를 올리고 헤더 첫 바이트만 건너뛴 뒤 다음 헤더부터 재탐색 (페이로드 안에 헤더와 같은 바이트열이 있어도 동기화가 깨지지 않음)
+- 파라미터(`cols, rows, header, on_frame`)는 생성자 주입 → 런타임 변경 시 재생성
+- 카운터: `frames_ok`, `checksum_errors`
+- **단위 테스트 대상**: 정상 프레임, 헤더 중간 끊김, 잡음 섞임, 부분 수신, 체크섬 불일치 후 재동기화, 페이로드 내 헤더 패턴
 
 ### 6.4 `CsvLogger` ([sensor/csv_logger.py](sensor/csv_logger.py))
 
@@ -173,9 +175,9 @@ Tk 윈도우 레이아웃:
 ┌──────────────────────────────────────────────────────────────────┐
 │ Sensor Recorder                                                   │
 │ ┌─ Serial ───────────────┐ ┌─ Packet ──────────────────────────┐ │
-│ │ Port  [COM3 ▼] Refresh │ │ Cols [64]     Rows [32]           │ │
-│ │ Baud Rate [921600]     │ │ Header [A55A] Pre skip [6]        │ │
-│ │ Data bits  8-bit(fixed)│ │ Post skip [2] Colormap [viridis▼] │ │
+│ │ Port  [COM3 ▼] Refresh │ │ Cols [32]     Rows [64]           │ │
+│ │ Baud Rate [921600]     │ │ Header [A55A01060801]             │ │
+│ │ Data bits  8-bit(fixed)│ │ Colormap [jet ▼]                  │ │
 │ └────────────────────────┘ └───────────────────────────────────┘ │
 │ ┌─ Recording ──────────────────────────────────────────────────┐ │
 │ │ CSV file [/path/to/out.csv]                        [Browse]  │ │
@@ -207,9 +209,9 @@ Tk 윈도우 레이아웃:
 
 ## 7. 데이터 흐름
 
-1. 사용자: 포트/해상도/헤더/오프셋 입력 → **Connect**
+1. 사용자: 포트/해상도/헤더 입력 → **Connect**
 2. `SerialReader` 스레드: 포트 열기 → 바이트 수신 → `parser.feed()` (실패 시 자동 재시도)
-3. `FrameParser`: 헤더 동기화 → 프레임 완성 시 큐에 push
+3. `FrameParser`: 헤더 동기화 → 체크섬 검증 통과 시 프레임을 큐에 push (불일치 패킷은 폐기)
 4. GUI `tick()` (≈30 Hz): 큐에서 프레임 pop → `ColormapView.update()` + (기록 중이면) `CsvLogger.write()`
 5. (선택) **Start Recording** → CSV 파일 오픈 → tick에서 자동 기록
 6. **Stop Recording** → CSV close (연결은 유지)

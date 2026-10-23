@@ -46,3 +46,9 @@ def test_concurrent_update_and_get_never_raises_or_tears():
         t.join(timeout=2.0)
 
     assert errors == []
+
+
+def test_build_detection_mask_ignores_out_of_range_indices():
+    from client.config import build_detection_mask
+    mask = build_detection_mask(4, [1, 4, 99, -1])
+    assert mask.tolist() == [True, False, True, True]

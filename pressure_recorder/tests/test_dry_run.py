@@ -21,6 +21,9 @@ import pytest  # noqa: F401  -- pytest collected as runner
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+# common/ lives at the repo root, one level above pressure_recorder/.
+sys.path.insert(0, os.path.dirname(ROOT))
+from common import config as _config  # noqa: E402
 
 # `cmd` is a folder of scripts, not a Python package — load start.py by path.
 _spec = importlib.util.spec_from_file_location(
@@ -116,7 +119,7 @@ def test_dry_run_writes_csv(tmp_path):
         rows = list(reader)
     assert rows[0][0] == "timestamp"
     assert len(rows) > 5, f"Too few rows: {len(rows)}"
-    expected_cols = 1 + 32 * 64
+    expected_cols = 1 + _config.DEFAULT_COLS * _config.DEFAULT_ROWS
     assert len(rows[1]) == expected_cols
 
 

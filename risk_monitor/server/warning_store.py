@@ -2,9 +2,11 @@
 warnings.log, plus the snapshot PNG (if/when POST /image arrives) saved
 under images/. Kept separate from ServerState (which only holds the
 latest-for-dashboard values in memory) so a restart doesn't lose history."""
+import bisect
 import json
 import logging
 import os
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -12,20 +14,34 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+DATA_DIRNAME = "press_warnings"
+
+
 def _default_dir():
-    """%APPDATA%\\carerobot\\press_warnings on Windows (the conventional
-    per-user app-data location, always writable and independent of where
-    the exe happens to be run from); a home-directory fallback elsewhere
-    (dev machines / CI don't set APPDATA)."""
+    """<exe folder>\\press_warnings when running as the frozen PyInstaller
+    exe, so the data sits next to the deployed app. A subfolder rather than
+    the exe folder itself, so per-client directories can't collide with
+    PyInstaller's _internal/. Running from source: %APPDATA%\\carerobot\\
+    press_warnings on Windows, a home-directory fallback elsewhere (dev
+    machines / CI don't set APPDATA)."""
+    if getattr(sys, "frozen", False):
+        return str(Path(sys.executable).resolve().parent / DATA_DIRNAME)
     appdata = os.environ.get("APPDATA")
     if appdata:
-        return str(Path(appdata) / "carerobot" / "press_warnings")
-    return str(Path.home() / "press_warnings")
+        return str(Path(appdata) / "carerobot" / DATA_DIRNAME)
+    return str(Path.home() / DATA_DIRNAME)
 
 
 DEFAULT_DIR = _default_dir()
 LOG_FILENAME = "warnings.log"
 IMAGE_DIRNAME = "images"
+
+
+def _nearest_gap(sorted_times, ts):
+    """Distance from ts to the closest value in sorted_times (inf if empty)."""
+    i = bisect.bisect_left(sorted_times, ts)
+    gaps = [abs(sorted_times[j] - ts) for j in (i - 1, i) if 0 <= j < len(sorted_times)]
+    return min(gaps, default=float("inf"))
 
 
 class WarningStore:
@@ -34,7 +50,72 @@ class WarningStore:
         self.image_dir = self.base_dir / IMAGE_DIRNAME
         self.log_path = self.base_dir / LOG_FILENAME
         self._lock = threading.Lock()
+        self._event_times_cache = (None, [])
+        self._image_times_cache = (None, ([], []))
         self.image_dir.mkdir(parents=True, exist_ok=True)
+
+    def find_image(self, received_at, is_mock=False, before=1.0, after=10.0):
+        """Path of the snapshot PNG belonging to the warning logged at
+        `received_at`, or None. POST /event and POST /image are separate
+        requests stamped independently, so a real warning's image filename
+        differs from the event's received_at by a few ms; pick the closest
+        unprefixed PNG within [-before, +after] seconds that no other
+        logged warning is closer to. Mock images share the exact stamp."""
+        if is_mock:
+            path = self.image_dir / f"mock_{received_at:.6f}.png"
+            return path if path.exists() else None
+        exact = self.image_dir / f"{received_at:.6f}.png"
+        if exact.exists():
+            return exact
+        event_times = self._event_times()
+        image_times, image_paths = self._image_times()
+        best, best_gap = None, None
+        lo = bisect.bisect_left(image_times, received_at - before)
+        hi = bisect.bisect_right(image_times, received_at + after)
+        for ts, path in zip(image_times[lo:hi], image_paths[lo:hi]):
+            gap = abs(ts - received_at)
+            if _nearest_gap(event_times, ts) < gap:
+                continue  # closer to another warning
+            if best_gap is None or gap < best_gap:
+                best, best_gap = path, gap
+        return best if best is not None and best.exists() else None
+
+    def _event_times(self):
+        """Sorted received_at of every real (non-mock) logged warning,
+        re-parsed only when warnings.log changes -- the dashboard requests
+        one history image per row, so re-reading the whole log each time
+        gets slow once months of warnings have piled up."""
+        try:
+            st = self.log_path.stat()
+            key = (st.st_mtime_ns, st.st_size)
+        except FileNotFoundError:
+            return []
+        if self._event_times_cache[0] != key:
+            times = [r.get("received_at") for r in self.read_history(limit=None)
+                     if not r.get("is_mock")]
+            times = sorted(t for t in times if isinstance(t, (int, float)))
+            self._event_times_cache = (key, times)
+        return self._event_times_cache[1]
+
+    def _image_times(self):
+        """(sorted timestamps, matching paths) of unprefixed (real warning)
+        PNGs, re-scanned only when images/ changes."""
+        try:
+            key = self.image_dir.stat().st_mtime_ns
+        except FileNotFoundError:
+            return [], []
+        if self._image_times_cache[0] != key:
+            entries = []
+            for path in self.image_dir.glob("*.png"):
+                try:
+                    entries.append((float(path.stem), path))
+                except ValueError:
+                    continue  # mock_/status_ prefixed
+            entries.sort(key=lambda e: e[0])
+            self._image_times_cache = (
+                key, ([ts for ts, _ in entries], [p for _, p in entries])
+            )
+        return self._image_times_cache[1]
 
     def log_event(self, payload, received_at):
         """Appends one JSON line for a client risk warning (POST /event)."""
@@ -45,6 +126,7 @@ class WarningStore:
         with self._lock:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
+        self._event_times_cache = (None, [])
         logger.info("warning logged -> %s", self.log_path)
         return record
 
@@ -57,7 +139,7 @@ class WarningStore:
             with open(self.log_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
         records = []
-        for line in lines[-limit:]:
+        for line in (lines if limit is None else lines[-limit:]):
             line = line.strip()
             if not line:
                 continue
@@ -148,6 +230,8 @@ class WarningStore:
         path = self.image_dir / filename
         with open(path, "wb") as f:
             f.write(image_bytes)
+        # Don't rely on the directory mtime alone (coarse on some filesystems).
+        self._image_times_cache = (None, ([], []))
         logger.info("warning image saved -> %s", path)
         return str(path)
 

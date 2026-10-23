@@ -3,7 +3,7 @@
 Usage:
     python cmd/start.py [--port /dev/ttyUSB0] [--outdir DIR]
                         [--baud 921600] [--cols 32] [--rows 64]
-                        [--header A55A] [--pre 6] [--post 2]
+                        [--header A55A01060801]
                         [--interval 1.0]
                         [--upload] [--upload-interval 60]
                         [--wandb-project NAME] [--wandb-entity NAME]
@@ -42,8 +42,6 @@ def build_parser():
     p.add_argument("--cols", type=int, default=config.DEFAULT_COLS)
     p.add_argument("--rows", type=int, default=config.DEFAULT_ROWS)
     p.add_argument("--header", default=config.DEFAULT_HEADER_HEX, help="hex string, e.g. A55A")
-    p.add_argument("--pre", type=int, default=config.DEFAULT_PRE_SKIP)
-    p.add_argument("--post", type=int, default=config.DEFAULT_POST_SKIP)
     p.add_argument("--interval", type=float, default=1.0,
                    help="save interval in seconds (default 1.0, 0 = every frame)")
     p.add_argument("--outdir", default=None,
@@ -164,8 +162,6 @@ class WandbUploader:
             "cols": args.cols,
             "rows": args.rows,
             "header": args.header,
-            "pre": args.pre,
-            "post": args.post,
             "save_interval": args.interval,
             "outpath": outpath,
         }
@@ -497,7 +493,7 @@ class Recorder:
         print(
             f"[cfg] port={args.port} baud={args.baud} "
             f"cols={args.cols} rows={args.rows} "
-            f"header={args.header} pre={args.pre} post={args.post} "
+            f"header={args.header} "
             f"interval={self.interval}s",
             flush=True,
         )
@@ -511,7 +507,7 @@ class Recorder:
             reader = FakeReader(args.cols, args.rows, args.dry_fps,
                                 self.on_frame, on_status=self.on_status)
         else:
-            parser = FrameParser(args.cols, args.rows, header, args.pre, args.post, self.on_frame)
+            parser = FrameParser(args.cols, args.rows, header, self.on_frame)
             reader = SerialReader(args.port, args.baud, parser, on_status=self.on_status)
 
         def handle_sig(signum, frame):

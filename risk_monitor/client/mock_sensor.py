@@ -23,7 +23,7 @@ Usage:
     python -m client.mock_sensor [--csv client/dumpy_data/Calib31.CSV]
                                   [--link /dev/ttyUSB0] [--baud 921600]
                                   [--cols 32] [--rows 64]
-                                  [--header A55A] [--pre 6] [--post 2]
+                                  [--header A55A01060801]
                                   [--fps 30] [--seed 1234]
 """
 import argparse
@@ -42,6 +42,11 @@ import serial
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+_REPO_ROOT = os.path.dirname(_PROJECT_ROOT)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from common.config import DEFAULT_COLS, DEFAULT_HEADER_HEX, DEFAULT_ROWS  # noqa: E402
 
 DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "dumpy_data", "Calib31.CSV")
 
@@ -76,11 +81,12 @@ def next_row_index(start_row, sent, n_frames, warning):
     return start_row if warning else (start_row + sent) % n_frames
 
 
-def build_packet(header, pre_skip, payload, post_skip):
-    """header/payload: bytes-like. pre_skip/post_skip: int (filler zero
-    bytes) -- their content is never inspected by FrameParser, only their
-    length matters."""
-    return bytes(header) + bytes(pre_skip) + payload.tobytes() + bytes(post_skip)
+def build_packet(header, payload):
+    """header: bytes-like, payload: uint8 ndarray. Packet = header + payload
+    + 2-byte checksum (little-endian 16-bit sum of every preceding byte), as
+    FrameParser expects."""
+    body = bytes(header) + payload.tobytes()
+    return body + (sum(body) & 0xFFFF).to_bytes(2, "little")
 
 
 class SocatPtyBridge:
@@ -143,11 +149,9 @@ def build_parser():
     p.add_argument("--link", default="/dev/ttyUSB0",
                     help="device path the consumer (SerialReader) will open")
     p.add_argument("--baud", type=int, default=921600)
-    p.add_argument("--cols", type=int, default=32)
-    p.add_argument("--rows", type=int, default=64)
-    p.add_argument("--header", default="A55A", help="hex string, e.g. A55A")
-    p.add_argument("--pre", type=int, default=6)
-    p.add_argument("--post", type=int, default=2)
+    p.add_argument("--cols", type=int, default=DEFAULT_COLS)
+    p.add_argument("--rows", type=int, default=DEFAULT_ROWS)
+    p.add_argument("--header", default=DEFAULT_HEADER_HEX, help="hex string, e.g. A55A01060801")
     p.add_argument("--fps", type=float, default=30.0)
     p.add_argument("--seed", type=int, default=None,
                     help="random seed for the starting row (default: OS entropy)")
@@ -194,7 +198,7 @@ def main(argv=None):
         while not stop_event.is_set():
             row = next_row_index(start_row, sent, n_frames, args.warning)
             frame = frames[row]
-            packet = build_packet(header, args.pre, frame, args.post)
+            packet = build_packet(header, frame)
             ser.write(packet)
             sent += 1
             if stop_event.wait(period):

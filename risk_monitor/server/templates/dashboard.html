@@ -255,9 +255,13 @@
         justify-content: center;
       }
       #historyDetailImage {
-        max-width: 100%;
-        max-height: 320px;
+        max-width: none;
+        max-height: none;
+        flex: none;
         display: block;
+      }
+      #historyDetailImageWrap {
+        overflow: hidden;
       }
       #historyDetailNoImage {
         font-size: 16px;
@@ -393,6 +397,26 @@
       #settingsPanel h2 {
         font-size: 18px;
         margin: 0 0 16px;
+      }
+      #settingsTabBar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 16px;
+      }
+      .settingsTabBtn {
+        flex: 1;
+        background: #14161a;
+        color: #a0a4ab;
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-size: 15px;
+        cursor: pointer;
+      }
+      .settingsTabBtn.active {
+        background: #2a2c30;
+        color: #e6e6e6;
+        border-color: #565a63;
       }
       #settingsPanel h3 {
         font-size: 16px;
@@ -556,16 +580,16 @@
       }
       #clientGrid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(180px, 1fr));
+        grid-template-columns: repeat(4, minmax(260px, 1fr));
         grid-template-rows: repeat(2, auto);
-        gap: 16px;
-        max-width: 1100px;
+        gap: 24px;
+        max-width: 1500px;
       }
       .clientCard {
         background: #1c1e23;
         border: 2px solid #333;
-        border-radius: 10px;
-        padding: 14px;
+        border-radius: 12px;
+        padding: 20px;
         cursor: pointer;
         transition: border-color 0.15s ease;
       }
@@ -634,16 +658,19 @@
         background: #0a0b0d;
         border: 1px solid #2a2c30;
         border-radius: 6px;
-        height: 90px;
+        height: 150px;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
         overflow: hidden;
       }
-      .clientCard .clientCardThumbWrap img {
-        max-width: 100%;
-        max-height: 100%;
+      .clientCard .clientCardThumbWrap canvas {
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        object-fit: contain;
+        border: none;
       }
       .clientCard .clientCardThumbPlaceholder {
         font-size: 13px;
@@ -668,6 +695,20 @@
         font-size: 13px;
         color: #a0a4ab;
         margin-top: 6px;
+      }
+      .clientCard .clientCardThresholds {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .clientCard .clientCardThresholdLabel {
+        font-size: 13px;
+        color: #c9ccd1;
+        background: #14161a;
+        border: 1px solid #2a2c30;
+        border-radius: 999px;
+        padding: 3px 9px;
       }
       #clientGridOverflow {
         margin-top: 12px;
@@ -715,114 +756,127 @@
     <div id="settingsPanel">
       <h2>설정</h2>
 
-      <div class="field">
-        <button
-          id="resetDefaultsBtn"
-          class="settingsActionBtn"
-          style="border-color: #ff3b3b; color: #ff8080"
-        >
-          모든 설정 기본값으로 초기화
+      <div id="settingsTabBar" style="display: none">
+        <button type="button" class="settingsTabBtn" data-tab="global">
+          전역 설정
+        </button>
+        <button type="button" class="settingsTabBtn" data-tab="individual">
+          개별 설정
         </button>
       </div>
 
-      <div class="field">
-        <label for="pollInput">폴링 주기 (ms)</label>
-        <input type="number" id="pollInput" min="200" step="100" />
+      <div id="settingsTabGlobal" class="settingsTab">
+        <div class="field">
+          <label for="pollInput">폴링 주기 (ms)</label>
+          <input type="number" id="pollInput" min="200" step="100" />
+        </div>
+
+        <h3>시스템 설정</h3>
+        <div class="field">
+          <label for="volumeInput"
+            >알림 소리 크기 (<span id="volumeValue">100</span>%)</label
+          >
+          <input type="range" id="volumeInput" min="0" max="100" step="1" />
+        </div>
+        <div class="field">
+          <label for="soundStyleInput">알림 소리 종류</label>
+          <select id="soundStyleInput">
+            <option value="beep">비프음 (짧은 단음)</option>
+            <option value="double">더블 비프 (두 번 울림)</option>
+            <option value="chime">차임벨 (띠리링)</option>
+            <option value="siren">사이렌 (오르내림, 긴 경고음)</option>
+          </select>
+          <button type="button" id="soundTestBtn" class="settingsActionBtn">
+            소리 테스트
+          </button>
+        </div>
+        <div class="field">
+          <label>데이터 저장 경로</label>
+          <div id="warningDirValue" class="readOnlyValue">불러오는 중...</div>
+        </div>
+        <div class="field">
+          <label>서버 IP 주소 (현재 무선랜)</label>
+          <div id="serverIpValue" class="readOnlyValue">불러오는 중...</div>
+        </div>
       </div>
 
-      <h3>위험 감지 설정</h3>
-      <div class="field">
-        <label for="criticalPressureInput">위험 압력 기준 (mmHg)</label>
-        <input type="number" id="criticalPressureInput" min="0" step="0.1" />
-      </div>
-      <div class="field">
-        <label for="criticalTimeInput">위험 지속 시간 기준 (min)</label>
-        <input type="number" id="criticalTimeInput" min="0" step="0.1" />
-      </div>
-      <div class="field">
-        <button id="saveDetectionBtn" class="settingsSaveBtn">저장</button>
+      <div id="settingsTabIndividual" class="settingsTab" style="display: none">
+        <h3>위험 감지 설정</h3>
+        <div class="field">
+          <label for="criticalPressureInput">위험 압력 기준 (mmHg)</label>
+          <input type="number" id="criticalPressureInput" min="0" step="0.1" />
+        </div>
+        <div class="field">
+          <label for="criticalTimeInput">위험 지속 시간 기준 (min)</label>
+          <input type="number" id="criticalTimeInput" min="0" step="0.1" />
+        </div>
+        <div class="field">
+          <button id="saveDetectionBtn" class="settingsSaveBtn">저장</button>
+        </div>
+
+        <h3>마스크 설정</h3>
+        <div id="maskHint">
+          센서 데이터가 배경에 표시됩니다("현재 상태 요청"으로 갱신). 드래그하여
+          감지에서 제외할 영역을 칠하세요.
+        </div>
+        <div class="field">
+          <canvas id="maskCanvas"></canvas>
+        </div>
+        <div class="field">
+          <button id="saveMaskBtn" class="settingsSaveBtn">마스크 저장</button>
+        </div>
+        <div class="field">
+          <button id="resetMaskBtn" class="settingsActionBtn">
+            전체 초기화 (마스크 없음)
+          </button>
+        </div>
+
+        <h3>개발자 설정</h3>
+        <div class="field">
+          <label for="calibrationInput">calibration factor</label>
+          <input type="number" id="calibrationInput" min="0" step="0.01" />
+        </div>
+        <div class="field">
+          <label for="rowsInput">sensor rows</label>
+          <input type="number" id="rowsInput" min="1" step="1" />
+        </div>
+        <div class="field">
+          <label for="colsInput">sensor cols</label>
+          <input type="number" id="colsInput" min="1" step="1" />
+        </div>
+        <div class="field">
+          <button id="saveDevBtn" class="settingsSaveBtn">저장</button>
+        </div>
+        <div class="field">
+          <button id="requestStatusBtn" class="settingsActionBtn">
+            현재 상태(STATUS) 요청
+          </button>
+        </div>
+        <div class="field">
+          <button id="mockWarningBtn" class="settingsActionBtn">
+            모의 경고 발생
+          </button>
+        </div>
+        <div class="field">
+          <button
+            id="clearMockWarningsBtn"
+            class="settingsActionBtn"
+            style="border-color: #ff3b3b; color: #ff8080"
+          >
+            모의 경고 기록 지우기
+          </button>
+        </div>
+        <div class="field">
+          <button
+            id="resetDefaultsBtn"
+            class="settingsActionBtn"
+            style="border-color: #ff3b3b; color: #ff8080"
+          >
+            이 클라이언트 설정 기본값으로 초기화
+          </button>
+        </div>
       </div>
 
-      <h3>마스크 설정</h3>
-      <div id="maskHint">
-        센서 데이터가 배경에 표시됩니다("현재 상태 요청"으로 갱신). 드래그하여
-        감지에서 제외할 영역을 칠하세요.
-      </div>
-      <div class="field">
-        <canvas id="maskCanvas"></canvas>
-      </div>
-      <div class="field">
-        <button id="saveMaskBtn" class="settingsSaveBtn">마스크 저장</button>
-      </div>
-      <div class="field">
-        <button id="resetMaskBtn" class="settingsActionBtn">
-          전체 초기화 (마스크 없음)
-        </button>
-      </div>
-
-      <h3>시스템 설정</h3>
-      <div class="field">
-        <label for="volumeInput"
-          >알림 소리 크기 (<span id="volumeValue">100</span>%)</label
-        >
-        <input type="range" id="volumeInput" min="0" max="100" step="1" />
-      </div>
-      <div class="field">
-        <label for="soundStyleInput">알림 소리 종류</label>
-        <select id="soundStyleInput">
-          <option value="beep">비프음 (짧은 단음)</option>
-          <option value="double">더블 비프 (두 번 울림)</option>
-          <option value="chime">차임벨 (띠리링)</option>
-          <option value="siren">사이렌 (오르내림, 긴 경고음)</option>
-        </select>
-        <button type="button" id="soundTestBtn" class="settingsActionBtn">
-          소리 테스트
-        </button>
-      </div>
-      <div class="field">
-        <label>데이터 저장 경로</label>
-        <div id="warningDirValue" class="readOnlyValue">불러오는 중...</div>
-      </div>
-
-      <h3>개발자 설정</h3>
-      <div class="field">
-        <label>서버 IP 주소 (현재 무선랜)</label>
-        <div id="serverIpValue" class="readOnlyValue">불러오는 중...</div>
-      </div>
-      <div class="field">
-        <label for="calibrationInput">calibration factor</label>
-        <input type="number" id="calibrationInput" min="0" step="0.01" />
-      </div>
-      <div class="field">
-        <label for="rowsInput">sensor rows</label>
-        <input type="number" id="rowsInput" min="1" step="1" />
-      </div>
-      <div class="field">
-        <label for="colsInput">sensor cols</label>
-        <input type="number" id="colsInput" min="1" step="1" />
-      </div>
-      <div class="field">
-        <button id="saveDevBtn" class="settingsSaveBtn">저장</button>
-      </div>
-      <div class="field">
-        <button id="requestStatusBtn" class="settingsActionBtn">
-          현재 상태(STATUS) 요청
-        </button>
-      </div>
-      <div class="field">
-        <button id="mockWarningBtn" class="settingsActionBtn">
-          모의 경고 발생
-        </button>
-      </div>
-      <div class="field">
-        <button
-          id="clearMockWarningsBtn"
-          class="settingsActionBtn"
-          style="border-color: #ff3b3b; color: #ff8080"
-        >
-          모의 경고 기록 지우기
-        </button>
-      </div>
       <div id="settingsMsg" class="settingsMsg"></div>
     </div>
 
@@ -837,6 +891,19 @@
           placeholder="예: 엉치뼈, 뒤꿈치"
         />
         <button id="warningModalCloseBtn">저장 후 확인</button>
+      </div>
+    </div>
+
+    <div id="gridWarningOverlay" class="modalOverlay" style="z-index: 56">
+      <div id="gridWarningModal" class="modalBox" style="text-align: center">
+        <h2 style="color: #ff8080">⚠ 위험 경고</h2>
+        <p id="gridWarningText"></p>
+        <button
+          id="gridWarningOpenBtn"
+          style="background: #ff3b3b; color: #fff; border: none; border-radius: 6px; padding: 8px 20px; font-size: 17px; font-weight: 600; cursor: pointer"
+        >
+          확인
+        </button>
       </div>
     </div>
 
@@ -974,10 +1041,74 @@
         return new Date(lastSeen * 1000).toLocaleTimeString("ko-KR");
       }
 
+      // The sensor grid is always shown landscape (wider than tall): a raw
+      // (rows x cols) layout that is portrait (rows > cols) is rotated 90deg
+      // CCW, a landscape/square one is shown as-is.
+      function isPortraitGrid(cols, rows) {
+        return rows > cols;
+      }
+
+      // The server's PNGs are the raw (rows x cols) grid; rotate them the
+      // same way as the grid canvas (only when portrait). Scales the image
+      // to fit maxW x maxH *after* rotation and returns the visual size,
+      // since the layout box keeps the unrotated size.
+      function fitLandscape(img, maxW, maxH) {
+        const W = img.naturalWidth,
+          H = img.naturalHeight;
+        if (!W || !H) return null;
+        const rotate = H > W;
+        const s = rotate
+          ? Math.min(maxW / H, maxH / W)
+          : Math.min(maxW / W, maxH / H);
+        img.style.width = `${W * s}px`;
+        img.style.height = `${H * s}px`;
+        img.style.transform = rotate ? "rotate(-90deg)" : "none";
+        return rotate ? { w: H * s, h: W * s } : { w: W * s, h: H * s };
+      }
+
+      // -- 통합 화면 경고 팝업: 새 경고가 생긴 클라이언트를 모아 한 팝업에
+      // 나열한다(동시에 여러 대가 경고해도 팝업이 겹치지 않는다). 확인을 누르면
+      // 첫 번째 클라이언트의 개별 화면으로 이동한다.
+      const gridWarningOverlay = document.getElementById("gridWarningOverlay");
+      const gridWarningText = document.getElementById("gridWarningText");
+      const gridWarningClients = new Map(); // client_id -> display name
+
+      function escapeHtml(s) {
+        return String(s).replace(
+          /[&<>"']/g,
+          (ch) =>
+            ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch],
+        );
+      }
+
+      function queueGridWarning(clientId, name) {
+        gridWarningClients.set(clientId, name);
+        gridWarningText.innerHTML = [...gridWarningClients.values()]
+          .map((n) => `${escapeHtml(n)} 클라이언트에서 위험 압력 감지`)
+          .join("<br>");
+        gridWarningOverlay.classList.add("open");
+      }
+
+      document
+        .getElementById("gridWarningOpenBtn")
+        .addEventListener("click", () => {
+          const [firstId] = gridWarningClients.keys();
+          gridWarningClients.clear();
+          gridWarningOverlay.classList.remove("open");
+          if (firstId !== undefined && currentClientId === null) {
+            openClientDetail(firstId);
+          }
+        });
+
       function renderClientCard(c) {
         const wasWarning = prevClientHasWarning.get(c.client_id) ?? false;
         if (c.has_warning && !wasWarning) {
           playAlertBeep();
+          // On the grid screen (no detail view open) there is no other
+          // place the warning popup would appear.
+          if (currentClientId === null) {
+            queueGridWarning(c.client_id, c.display_name || c.client_id);
+          }
         }
         prevClientHasWarning.set(c.client_id, c.has_warning);
 
@@ -1002,9 +1133,20 @@
               : "확인 중";
 
         card.innerHTML =
-          `<div class="clientCardThumbWrap"><img loading="lazy" onerror="this.remove()" src="/image/latest?client_id=${encodeURIComponent(c.client_id)}&t=${Date.now()}"></div>` +
+          `<div class="clientCardThumbWrap"></div>` +
           `<span class="clientCardBadge ${badgeClass}">${badgeText}</span>` +
-          `<div class="clientCardLastSeen">마지막 수신: ${formatLastSeen(c.last_seen)}</div>`;
+          `<div class="clientCardLastSeen">마지막 수신: ${formatLastSeen(c.last_seen)}</div>` +
+          `<div class="clientCardThresholds">` +
+          `<span class="clientCardThresholdLabel">위험 압력: ${c.critical_pressure} mmHg</span>` +
+          `<span class="clientCardThresholdLabel">위험 지속 시간: ${c.critical_time} min</span>` +
+          `</div>`;
+        // Same data (/api/clients' "latest" == /api/latest) and same drawing
+        // routine as the detail view, so the thumbnail matches it exactly.
+        if (c.latest) {
+          const thumb = document.createElement("canvas");
+          drawGridOn(thumb, c.latest);
+          card.querySelector(".clientCardThumbWrap").appendChild(thumb);
+        }
         card.prepend(renderClientIdHeader(c));
         return card;
       }
@@ -1128,6 +1270,7 @@
         poll();
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(poll, POLL_MS);
+        setSettingsTab("individual");
       }
 
       function closeClientDetail() {
@@ -1136,7 +1279,37 @@
         pollTimer = null;
         contentEl.style.display = "none";
         clientGridScreen.style.display = "block";
+        setSettingsTab("global");
       }
+
+      // -- 설정 패널: 카드를 선택하지 않은 상태에서는 전역 설정만, 카드를
+      // 선택한 상태에서는 개별 설정(위험 감지/마스크/개발자 설정)을 기본으로
+      // 보여준다. 개별 탭의 버튼들은 모두 currentClientId를 대상으로 동작하므로,
+      // 선택된 클라이언트가 없을 때는 개별 탭 자체를 숨겨 실수로 "default"
+      // 클라이언트 항목이 생성되는 것을 막는다.
+      const settingsTabBar = document.getElementById("settingsTabBar");
+      const settingsTabGlobalEl = document.getElementById("settingsTabGlobal");
+      const settingsTabIndividualEl = document.getElementById(
+        "settingsTabIndividual",
+      );
+      const settingsTabBtns = document.querySelectorAll(".settingsTabBtn");
+      let settingsTab = "global";
+
+      function setSettingsTab(tab) {
+        if (tab === "individual" && !currentClientId) tab = "global";
+        settingsTab = tab;
+        settingsTabBar.style.display = currentClientId ? "flex" : "none";
+        settingsTabGlobalEl.style.display = tab === "global" ? "block" : "none";
+        settingsTabIndividualEl.style.display =
+          tab === "individual" ? "block" : "none";
+        settingsTabBtns.forEach((btn) => {
+          btn.classList.toggle("active", btn.dataset.tab === tab);
+        });
+      }
+
+      settingsTabBtns.forEach((btn) => {
+        btn.addEventListener("click", () => setSettingsTab(btn.dataset.tab));
+      });
 
       document
         .getElementById("backToGridBtn")
@@ -1352,19 +1525,22 @@
       let maskPaintValue = true; // true = mark excluded, false = clear
       let latestPressure = null; // most recent sensor pressure snapshot, for overlay in the mask editor
 
-      // Mirrors drawGrid's convention below: the sensor grid is rendered rotated
-      // 90deg CCW from its raw (row, col) layout, so the physical canvas width/
-      // height are swapped (rows drive width, cols drive height) and the same
-      // translate+rotate transform is applied before any fillRect calls, which
-      // stay in raw (col*CELL, row*CELL) space. The mask editor must match this
-      // exactly, or its cols/rows orientation looks flipped relative to the main
-      // grid above and the sensor readings drawn in the background.
+      // Mirrors drawGridOn's convention below: a portrait sensor grid is
+      // rendered rotated 90deg CCW from its raw (row, col) layout, so the
+      // physical canvas width/height are swapped (rows drive width, cols drive
+      // height) and the same translate+rotate transform is applied before any
+      // fillRect calls, which stay in raw (col*CELL, row*CELL) space. The mask
+      // editor must match this exactly, or its cols/rows orientation looks
+      // flipped relative to the main grid and the sensor readings drawn in
+      // the background.
       function drawMaskEditor() {
         if (!maskCols || !maskRows) return;
         maskCtx.setTransform(1, 0, 0, 1, 0, 0);
         maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
-        maskCtx.translate(0, maskCanvas.height);
-        maskCtx.rotate(-Math.PI / 2);
+        if (isPortraitGrid(maskCols, maskRows)) {
+          maskCtx.translate(0, maskCanvas.height);
+          maskCtx.rotate(-Math.PI / 2);
+        }
 
         if (latestPressure && latestPressure.length === maskCols * maskRows) {
           for (let i = 0; i < latestPressure.length; i++) {
@@ -1413,10 +1589,11 @@
         maskCols = cols;
         maskRows = rows;
         excludedIdx = new Set(excludedList);
-        // Swapped to match the CCW rotation applied in drawMaskEditor (same as
-        // the main grid canvas: width follows rows, height follows cols).
-        maskCanvas.width = rows * MASK_CELL;
-        maskCanvas.height = cols * MASK_CELL;
+        // Swapped when portrait to match the CCW rotation applied in
+        // drawMaskEditor (same as the main grid canvas).
+        const rotate = isPortraitGrid(cols, rows);
+        maskCanvas.width = (rotate ? rows : cols) * MASK_CELL;
+        maskCanvas.height = (rotate ? cols : rows) * MASK_CELL;
         drawMaskEditor();
       }
 
@@ -1426,9 +1603,13 @@
         const scaleY = maskCanvas.height / rect.height;
         const screenX = (e.clientX - rect.left) * scaleX;
         const screenY = (e.clientY - rect.top) * scaleY;
-        // Inverse of the translate(0,H)+rotate(-90deg) transform used for drawing.
-        const row = Math.floor(screenX / MASK_CELL);
-        const col = Math.floor((maskCanvas.height - screenY) / MASK_CELL);
+        // Inverse of the (portrait-only) translate(0,H)+rotate(-90deg)
+        // transform used for drawing.
+        const rotate = isPortraitGrid(maskCols, maskRows);
+        const row = Math.floor((rotate ? screenX : screenY) / MASK_CELL);
+        const col = rotate
+          ? Math.floor((maskCanvas.height - screenY) / MASK_CELL)
+          : Math.floor(screenX / MASK_CELL);
         if (col < 0 || col >= maskCols || row < 0 || row >= maskRows)
           return null;
         return row * maskCols + col;
@@ -1461,7 +1642,7 @@
             await putConfig({ mask_excluded_idx: Array.from(excludedIdx) });
             showSettingsMsg("마스크가 저장되었습니다.");
           } catch (e) {
-            showSettingsMsg("저장 실패", true);
+            showSettingsMsg(`저장 실패: ${e.message}`, true);
           }
         });
 
@@ -1474,7 +1655,7 @@
             await putConfig({ mask_excluded_idx: [] });
             showSettingsMsg("마스크가 초기화되었습니다.");
           } catch (e) {
-            showSettingsMsg("저장 실패", true);
+            showSettingsMsg(`저장 실패: ${e.message}`, true);
           }
         });
 
@@ -1540,7 +1721,11 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updates),
         });
-        return resp.json();
+        const data = await resp.json();
+        // The server rejects invalid values (400) -- surface that instead of
+        // reporting success.
+        if (!resp.ok) throw new Error(data.message || `HTTP ${resp.status}`);
+        return data;
       }
 
       document
@@ -1553,7 +1738,7 @@
             });
             showSettingsMsg("위험 감지 설정이 저장되었습니다.");
           } catch (e) {
-            showSettingsMsg("저장 실패", true);
+            showSettingsMsg(`저장 실패: ${e.message}`, true);
           }
         });
 
@@ -1568,7 +1753,7 @@
             });
             showSettingsMsg("개발자 설정이 저장되었습니다.");
           } catch (e) {
-            showSettingsMsg("저장 실패", true);
+            showSettingsMsg(`저장 실패: ${e.message}`, true);
           }
         });
 
@@ -1676,26 +1861,36 @@
 
       const CELL = 2.5; // px per grid cell, square (1/4 of the original 10px)
 
-      // The grid is drawn rotated 90° counter-clockwise from its raw (row, col)
-      // layout: fill/render calls below use the raw coordinate space, and a
-      // canvas transform (translate + rotate(-90deg)) maps that space onto the
-      // visible (swapped-dimension) canvas.
       function drawGrid(data) {
+        drawGridOn(canvas, data);
+      }
+
+      // Shared by the detail view and the client cards. Fill calls below use
+      // the raw (row, col) coordinate space; if the raw grid is portrait
+      // (see isPortraitGrid) a canvas transform (translate + rotate(-90deg))
+      // maps that space onto a swapped-dimension canvas, so the result is
+      // always landscape.
+      function drawGridOn(canvas, data) {
+        const ctx = canvas.getContext("2d");
         const cols = data.cols,
           rows = data.rows;
         const rawW = cols * CELL,
           rawH = rows * CELL;
+        const rotate = isPortraitGrid(cols, rows);
+        const w = rotate ? rawH : rawW,
+          h = rotate ? rawW : rawH;
 
-        // CCW 90 rotation swaps displayed width/height relative to the raw grid.
-        if (canvas.width !== rawH || canvas.height !== rawW) {
-          canvas.width = rawH;
-          canvas.height = rawW;
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
         }
 
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.translate(0, canvas.height);
-        ctx.rotate(-Math.PI / 2);
+        if (rotate) {
+          ctx.translate(0, canvas.height);
+          ctx.rotate(-Math.PI / 2);
+        }
 
         const state = data.latest_state;
         if (state && state.pressure && state.pressure.length === cols * rows) {
@@ -1841,6 +2036,9 @@
           `/api/history/image/${ev.received_at}${ev.is_mock ? "?mock=1" : ""}`,
         );
         historyDetailImage.onload = () => {
+          const wrap = historyDetailImage.parentElement;
+          const size = fitLandscape(historyDetailImage, wrap.clientWidth - 2, 320);
+          if (size) wrap.style.height = `${size.h + 2}px`;
           historyDetailImage.style.display = "block";
         };
         historyDetailImage.onerror = () => {

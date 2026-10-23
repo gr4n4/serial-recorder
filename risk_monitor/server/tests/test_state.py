@@ -1,4 +1,5 @@
 from server.state import ServerState
+from common.config import DEFAULT_COLS, DEFAULT_ROWS
 
 
 def make_clock(start=1000.0):
@@ -19,8 +20,8 @@ def test_default_config():
     assert cfg["calibration_factor"] == 0.4755
     assert cfg["critical_pressure"] == 32.0
     assert cfg["critical_time"] == 90.0
-    assert cfg["cols"] == 32
-    assert cfg["rows"] == 64
+    assert cfg["cols"] == DEFAULT_COLS
+    assert cfg["rows"] == DEFAULT_ROWS
 
 
 def test_update_config_merges():
@@ -46,8 +47,22 @@ def test_record_event_stamps_received_at_and_updates_history():
     advance(5.0)
     state.record_event({"accumulated_time": 90.0, "risky_idx": [2], "pressure_mask_idx": [2]})
     assert len(state.event_history) == 2
-    assert state.latest_event["risky_idx"] == [2]
+    # Still-active cell 1 is kept; the client only reports newly fired cells.
+    assert state.latest_event["risky_idx"] == [1, 2]
     assert state.latest_event["received_at"] == 1005.0
+    assert state.event_history[-1]["risky_idx"] == [2]
+
+
+def test_clearing_newer_cells_keeps_earlier_still_active_cells():
+    state = ServerState()
+    state.record_event({"risky_idx": [1], "risky_pressure": [200]})
+    state.record_event({"risky_idx": [2], "risky_pressure": [210]})
+    state.clear_event([2])
+    assert state.has_warning()
+    assert state.latest_event["risky_idx"] == [1]
+    assert state.latest_event["risky_pressure"] == [200]
+    state.clear_event([1])
+    assert not state.has_warning()
 
 
 def test_event_history_is_bounded():
@@ -69,8 +84,8 @@ def test_snapshot_has_no_warning_before_any_event():
     state = ServerState()
     snap = state.snapshot()
     assert snap["latest_event"] is None
-    assert snap["cols"] == 32
-    assert snap["rows"] == 64
+    assert snap["cols"] == DEFAULT_COLS
+    assert snap["rows"] == DEFAULT_ROWS
 
 
 def test_snapshot_reflects_latest_event_and_state():
@@ -80,3 +95,13 @@ def test_snapshot_reflects_latest_event_and_state():
     snap = state.snapshot()
     assert snap["latest_event"]["risky_idx"] == [5]
     assert snap["latest_state"]["pressure"] == [0] * 10
+
+
+def test_clear_event_drops_latest_image_when_warning_resolved():
+    state = ServerState(cols=4, rows=4)
+    state.record_event({"risky_idx": [1, 2], "risky_pressure": [255, 255]})
+    state.record_image(b"png")
+    state.clear_event([1])
+    assert state.get_latest_image() == b"png"  # still warning on cell 2
+    state.clear_event([2])
+    assert state.get_latest_image() is None

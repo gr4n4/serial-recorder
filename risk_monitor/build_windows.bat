@@ -23,8 +23,11 @@ echo.
 echo Build complete: dist\pressure-server\pressure-server.exe
 
 echo Deploying to %DEPLOY_DIR% (ASCII-only path, required for the firewall) ...
-if exist "%DEPLOY_DIR%" rmdir /s /q "%DEPLOY_DIR%" || goto :error
-mkdir "%DEPLOY_DIR%" || goto :error
+REM Replace only the app files: the frozen server stores its data in
+REM %DEPLOY_DIR%\press_warnings (next to the exe), which must survive a rebuild.
+if exist "%DEPLOY_DIR%\_internal" rmdir /s /q "%DEPLOY_DIR%\_internal" || goto :error
+if exist "%DEPLOY_DIR%\pressure-server.exe" del /q "%DEPLOY_DIR%\pressure-server.exe" || goto :error
+if not exist "%DEPLOY_DIR%" mkdir "%DEPLOY_DIR%" || goto :error
 xcopy /e /i /q /y "dist\pressure-server\*" "%DEPLOY_DIR%\" >nul || goto :error
 
 REM Register the inbound firewall rule for the deployed exe. Also needed after

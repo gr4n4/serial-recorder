@@ -53,12 +53,11 @@ def test_load_frames_rejects_empty_csv(tmp_path):
 def test_build_packet_layout():
     header = bytes.fromhex("A55A")
     payload = np.array([1, 2, 3, 4], dtype=np.uint8)
-    packet = build_packet(header, 3, payload, 2)
+    packet = build_packet(header, payload)
     assert packet[:2] == header
-    assert packet[2:5] == b"\x00\x00\x00"
-    assert packet[5:9] == payload.tobytes()
-    assert packet[9:11] == b"\x00\x00"
-    assert len(packet) == 2 + 3 + 4 + 2
+    assert packet[2:6] == payload.tobytes()
+    assert packet[6:8] == (sum(packet[:6]) & 0xFFFF).to_bytes(2, "little")
+    assert len(packet) == 2 + 4 + 2
 
 
 def test_next_row_index_normal_mode_advances_and_wraps():

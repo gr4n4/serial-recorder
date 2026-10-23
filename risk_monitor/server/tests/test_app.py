@@ -229,8 +229,9 @@ def test_image_is_saved_to_warnings_dir(client, tmp_path):
     assert client.get("/api/latest").get_json()["has_image"] is True
 
 
-def test_image_status_saved_when_state_known(client, tmp_path):
-    client.post("/state", json={"timestamp": 1.0, "pressure": [1, 2, 3, 4]})
+def test_image_without_pressure_does_not_save_unrelated_state(client, tmp_path):
+    """A "state" snapshot is a different moment than the warning image."""
+    client.post("/state", json={"timestamp": 1.0, "pressure": [0] * 16})
     client.post(
         "/image",
         data={"image": (io.BytesIO(b"\x89PNGfake"), "risk.png")},
@@ -238,12 +239,7 @@ def test_image_status_saved_when_state_known(client, tmp_path):
     )
 
     image_dir = tmp_path / "warnings" / "default" / "images"
-    statuses = list(image_dir.glob("*.json"))
-    assert len(statuses) == 1
-    status = json.loads(statuses[0].read_text(encoding="utf-8"))
-    assert status["pressure"] == [1, 2, 3, 4]
-    assert status["cols"] == 4
-    assert status["rows"] == 4
+    assert [p.name for p in image_dir.glob("*.json") if not p.name.startswith("status_")] == []
 
 
 def test_state_request_saves_status_image(client, tmp_path):
@@ -316,3 +312,83 @@ def test_api_clients_lists_known_clients(client):
     assert set(by_id) == {"a", "b"}
     assert by_id["a"]["has_warning"] is False
     assert by_id["b"]["has_warning"] is True
+
+
+def test_api_clients_latest_matches_api_latest(client):
+    """The dashboard draws each client card's thumbnail from /api/clients'
+    "latest", so it must be the same payload as that client's /api/latest."""
+    client.get("/config?client_id=a")
+    client.post("/event?client_id=a", json={
+        "accumulated_time": 90.0, "risky_idx": [1], "pressure_mask_idx": [1, 2],
+    })
+
+    by_id = {c["client_id"]: c for c in client.get("/api/clients").get_json()["clients"]}
+    latest = client.get("/api/latest?client_id=a").get_json()
+    assert by_id["a"]["latest"] == latest
+    assert by_id["a"]["latest"]["latest_event"]["risky_cells"] == [[0, 1]]
+
+
+def test_history_image_found_despite_event_image_timestamp_skew(client, tmp_path):
+    """POST /event and POST /image stamp received_at independently, so the
+    image filename differs from the logged event time by a few ms."""
+    import time
+    ev = {"accumulated_time": 1.0, "risky_idx": [1], "risky_pressure": [255],
+          "pressure_mask_idx": [1]}
+    t0 = client.post("/event", json=ev).get_json()["received_at"]
+    client.post("/image", data={"image": (io.BytesIO(b"\x89PNGfake"), "r.png")},
+                content_type="multipart/form-data")
+    assert client.get(f"/api/history/image/{t0}").status_code == 200
+    assert client.get(f"/api/history/image/{t0 + 100}").status_code == 404
+
+
+@pytest.mark.parametrize("body", [
+    {"calibration_factor": 0},
+    {"calibration_factor": -1.0},
+    {"critical_time": "90"},
+    {"critical_pressure": None},
+    {"cols": 0},
+    {"mask_excluded_idx": [16]},
+    {"mask_excluded_idx": [-1]},
+])
+def test_put_config_rejects_invalid_values(client, body):
+    before = client.get("/config").get_json()
+    resp = client.put("/config", json=body)
+    assert resp.status_code == 400
+    assert client.get("/config").get_json() == before
+
+
+def test_put_config_drops_client_id_and_unknown_keys(client):
+    data = client.put("/config", json={"critical_time": 45, "client_id": "x", "bogus": 1}).get_json()
+    assert data["critical_time"] == 45.0
+    assert "client_id" not in data and "bogus" not in data
+
+
+def test_put_config_resize_drops_out_of_range_mask_cells(client):
+    client.put("/config", json={"mask_excluded_idx": [1, 15]})
+    data = client.put("/config", json={"rows": 2}).get_json()
+    assert data["mask_excluded_idx"] == [1]
+
+
+@pytest.mark.parametrize("raw", ["..", ".", "pi a", "CON", "a" * 100, "x/../y"])
+def test_sanitize_client_id_never_escapes_or_collides(raw):
+    from server.app import _sanitize_client_id
+    safe = _sanitize_client_id(raw)
+    assert safe not in (".", "..") and "/" not in safe and "\\" not in safe
+    assert not safe.startswith(".") and not safe.endswith(".")
+    assert safe != _sanitize_client_id(raw.replace(" ", "_")) or " " not in raw
+
+
+def test_sanitize_client_id_keeps_plain_hostnames():
+    from server.app import _sanitize_client_id
+    assert _sanitize_client_id("raspberrypi-01") == "raspberrypi-01"
+
+
+def test_post_image_saves_the_frame_it_was_rendered_from(client, tmp_path):
+    pressure = list(range(16))
+    resp = client.post("/image", data={
+        "image": (io.BytesIO(b"png"), "risk.png"),
+        "pressure": json.dumps(pressure),
+    }, content_type="multipart/form-data")
+    received_at = resp.get_json()["received_at"]
+    status_path = tmp_path / "warnings" / "default" / "images" / f"{received_at:.6f}.json"
+    assert json.loads(status_path.read_text())["pressure"] == pressure

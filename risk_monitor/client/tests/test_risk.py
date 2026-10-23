@@ -127,3 +127,24 @@ def test_rejects_wrong_length_vector():
     with pytest.raises(ValueError):
         acc.update(np.zeros(3, dtype=np.uint8), calibration_factor=0.5,
                    critical_pressure=32, critical_time=10)
+
+
+def test_reset_reports_previously_active_cells_as_cleared():
+    """After a `reset`, the server must be told the active warning is gone,
+    or it keeps showing it even once pressure drops."""
+    clock, advance = make_clock()
+    acc = RiskAccumulator(n_cells=4, alert_cooldown_s=0.0, clock=clock)
+    hot = np.array([100, 0, 0, 0], dtype=np.uint8)
+    kwargs = dict(calibration_factor=0.5, critical_pressure=32, critical_time=1.0)
+    acc.update(hot, **kwargs)
+    advance(61.0)
+    fired, _, _ = acc.update(hot, **kwargs)
+    assert fired.tolist() == [0]
+
+    acc.reset()
+    acc.resync()
+    _, _, cleared = acc.update(hot, **kwargs)
+    assert cleared.tolist() == [0]
+    # Reported only once.
+    _, _, cleared = acc.update(hot, **kwargs)
+    assert cleared.tolist() == []

@@ -3,10 +3,22 @@ server-managed runtime thresholds (calibration_factor, critical_pressure,
 critical_time) and detection mask, which are refreshed by periodic
 polling."""
 import os
+import sys
 import threading
 from dataclasses import dataclass
 
 import numpy as np
+
+# common/config.py (the shared sensor grid size) sits one level above
+# risk_monitor/, which isn't on sys.path when this module is imported
+# directly (e.g. by tests) rather than via client/main.py, which does
+# this same insert.
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(_APP_ROOT)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from common.config import DEFAULT_COLS, DEFAULT_HEADER_HEX, DEFAULT_ROWS  # noqa: E402
 
 DEFAULT_WARNING_LOG_DIR = os.path.join(os.path.expanduser("~"), "risk_monitor_logs", "client_warnings")
 
@@ -21,11 +33,9 @@ class ClientConfig:
     client_id: str = ""
     port: str = "/dev/ttyUSB0"
     baud: int = 921600
-    cols: int = 32
-    rows: int = 64
-    header_hex: str = "A55A"
-    pre_skip: int = 6
-    post_skip: int = 2
+    cols: int = DEFAULT_COLS
+    rows: int = DEFAULT_ROWS
+    header_hex: str = DEFAULT_HEADER_HEX
 
     server_base_url: str = "http://localhost:5000"
     config_path: str = "/config"
@@ -81,8 +91,12 @@ class RuntimeConfig:
 
 def build_detection_mask(n_cells, excluded_idx):
     """Builds a bool array of length n_cells, True everywhere except at the
-    (flat) indices listed in excluded_idx."""
+    (flat) indices listed in excluded_idx. Indices outside [0, n_cells)
+    (e.g. a mask saved for a different grid size) are ignored rather than
+    raising or -- for negative values -- wrapping to the wrong cell."""
     mask = np.ones(n_cells, dtype=bool)
     if excluded_idx:
-        mask[np.asarray(excluded_idx, dtype=np.int64)] = False
+        idx = np.asarray(excluded_idx, dtype=np.int64)
+        idx = idx[(idx >= 0) & (idx < n_cells)]
+        mask[idx] = False
     return mask

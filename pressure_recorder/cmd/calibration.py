@@ -6,7 +6,7 @@ Connects to the sensor, averages N frames, and saves the result as
 Usage:
     python cmd/calibration.py [--port /dev/ttyUSB0] [--samples 10]
                               [--baud 921600] [--cols 32] [--rows 64]
-                              [--header A55A] [--pre 6] [--post 2]
+                              [--header A55A01060801]
                               [--outpath baseline_name]
 """
 import argparse
@@ -41,8 +41,6 @@ def build_parser():
     p.add_argument("--cols", type=int, default=config.DEFAULT_COLS)
     p.add_argument("--rows", type=int, default=config.DEFAULT_ROWS)
     p.add_argument("--header", default=config.DEFAULT_HEADER_HEX)
-    p.add_argument("--pre", type=int, default=config.DEFAULT_PRE_SKIP)
-    p.add_argument("--post", type=int, default=config.DEFAULT_POST_SKIP)
     p.add_argument("--samples", type=int, default=10,
                    help="number of frames to average (default 10)")
     p.add_argument("--timeout", type=float, default=10.0,
@@ -105,7 +103,7 @@ def main(argv=None):
           f"cols={args.cols} rows={args.rows}")
 
     collector = Collector(args.samples)
-    parser = FrameParser(args.cols, args.rows, header, args.pre, args.post, collector.on_frame)
+    parser = FrameParser(args.cols, args.rows, header, collector.on_frame)
     reader = SerialReader(args.port, args.baud, parser, on_status=collector.on_status)
     reader.start()
     try:
